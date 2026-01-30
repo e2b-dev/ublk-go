@@ -72,6 +72,13 @@ func (w *ioWorker) run() {
 	// Initialize buffer manager
 	w.bufferMgr = NewBufferManager(w.mmapAddr, w.queueDepth)
 
+	// Register the char device fd for reduced per-IO overhead
+	charFD := int(w.device.charDevFD.Fd())
+	if err := w.ring.RegisterFiles([]int{charFD}); err != nil {
+		// Not fatal - just means we can't use fixed files
+		logf("Queue %d: fixed file registration failed (non-fatal): %v", w.qid, err)
+	}
+
 	// Submit initial FETCH_REQ for all tags
 	if err := w.submitAllFetchRequests(); err != nil {
 		logf("Queue %d: failed to submit initial fetch requests: %v", w.qid, err)
@@ -309,10 +316,17 @@ func (w *ioWorker) prepareSQE(sqe *UringSQE, cmd *UblkIOCommand, tag uint16) {
 	cmdData := cmd.ToBytes()
 
 	sqe.Opcode = IORING_OP_URING_CMD
-	sqe.Fd = int32(w.device.charDevFD.Fd())
 	sqe.Addr = uint64(uintptr(unsafe.Pointer(&cmdData[0])))
 	sqe.Len = uint32(cmd.Size())
 	sqe.UserData = uint64(tag)
+
+	// Use fixed file if registered (reduces per-IO overhead)
+	if w.ring.HasFixedFiles() {
+		sqe.Fd = 0 // Index into registered files array
+		sqe.Flags = IOSQE_FIXED_FILE
+	} else {
+		sqe.Fd = int32(w.device.charDevFD.Fd())
+	}
 }
 
 func (w *ioWorker) mmapIODescs() error {

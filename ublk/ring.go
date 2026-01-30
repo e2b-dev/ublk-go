@@ -22,6 +22,10 @@ type Ring struct {
 	params UringParams
 	flags  uint
 
+	// Fixed file support
+	fixedFiles    []int32 // registered file descriptors
+	hasFixedFiles bool
+
 	// Mmap tracking for cleanup
 	mmapSQ   []byte
 	mmapCQ   []byte
@@ -320,6 +324,70 @@ func (r *Ring) CQEReady() bool {
 	head := atomic.LoadUint32(r.cq.head)
 	tail := atomic.LoadUint32(r.cq.tail)
 	return head != tail
+}
+
+// io_uring_register opcodes.
+const (
+	IORING_REGISTER_FILES        = 2
+	IORING_UNREGISTER_FILES      = 3
+	IORING_REGISTER_FILES_UPDATE = 6
+)
+
+// RegisterFiles registers file descriptors for use with IOSQE_FIXED_FILE.
+// Once registered, use the index (0, 1, 2...) as the fd in SQEs with
+// the IOSQE_FIXED_FILE flag set. This reduces per-I/O overhead.
+func (r *Ring) RegisterFiles(fds []int) error {
+	if len(fds) == 0 {
+		return errors.New("no files to register")
+	}
+
+	// Convert to int32 array for syscall
+	files := make([]int32, len(fds))
+	for i, fd := range fds {
+		files[i] = int32(fd)
+	}
+
+	_, _, errno := syscall.Syscall6(
+		unix.SYS_IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_REGISTER_FILES,
+		uintptr(unsafe.Pointer(&files[0])),
+		uintptr(len(files)),
+		0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("io_uring_register files failed: %w", errno)
+	}
+
+	r.fixedFiles = files
+	r.hasFixedFiles = true
+	return nil
+}
+
+// UnregisterFiles unregisters all previously registered files.
+func (r *Ring) UnregisterFiles() error {
+	if !r.hasFixedFiles {
+		return nil
+	}
+
+	_, _, errno := syscall.Syscall6(
+		unix.SYS_IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_UNREGISTER_FILES,
+		0, 0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("io_uring_unregister files failed: %w", errno)
+	}
+
+	r.fixedFiles = nil
+	r.hasFixedFiles = false
+	return nil
+}
+
+// HasFixedFiles returns true if files have been registered.
+func (r *Ring) HasFixedFiles() bool {
+	return r.hasFixedFiles
 }
 
 // Helpers

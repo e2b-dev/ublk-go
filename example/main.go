@@ -8,12 +8,13 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/ublk-go/ublk/ublk"
 )
 
 // MemoryBackend is a thread-safe in-memory storage backend.
-// It implements ublk.Backend, ublk.Flusher, and ublk.WriteZeroer.
+// It implements all ublk backend interfaces: Backend, Flusher, WriteZeroer, Discarder.
 type MemoryBackend struct {
 	mu   sync.RWMutex
 	data []byte
@@ -63,7 +64,6 @@ func (b *MemoryBackend) WriteAt(p []byte, off int64) (n int, err error) {
 }
 
 // Flush implements ublk.Flusher.
-// For in-memory storage, this is a no-op.
 func (b *MemoryBackend) Flush() error {
 	return nil
 }
@@ -78,26 +78,26 @@ func (b *MemoryBackend) WriteZeroes(off, length int64) error {
 	}
 
 	end := min(off+length, b.size)
-
-	// Zero the region
 	clear(b.data[off:end])
 
 	return nil
 }
 
+// Discard implements ublk.Discarder.
+func (b *MemoryBackend) Discard(off, length int64) error {
+	return b.WriteZeroes(off, length)
+}
+
 func main() {
-	// Create a 1GB in-memory backend
 	const deviceSize = 1024 * 1024 * 1024
 	backend := NewMemoryBackend(deviceSize)
 
-	// Configure the device
 	config := ublk.DefaultConfig()
 	config.Size = deviceSize
 	config.BlockSize = 512
 	config.NrHWQueues = 1
 	config.QueueDepth = 128
 
-	// Create and start the device
 	dev, err := ublk.CreateDevice(backend, config)
 	if err != nil {
 		log.Fatalf("Failed to create device: %v", err)
@@ -109,17 +109,66 @@ func main() {
 	fmt.Printf("  sudo mount %s /mnt\n", dev.BlockDevicePath())
 	fmt.Println("\nPress Ctrl+C to stop...")
 
-	// Handle signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
+	// Print stats every 10 seconds
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				printStats(dev)
+			case <-done:
+				return
+			}
+		}
+	}()
+
 	<-sigCh
+	close(done)
 	fmt.Println("\nStopping device...")
 
-	// Clean up
+	printStats(dev)
+
 	if err := dev.Delete(); err != nil {
 		log.Fatalf("Failed to delete device: %v", err)
 	}
 
 	fmt.Println("Device stopped successfully")
+}
+
+func printStats(dev *ublk.Device) {
+	stats := dev.Stats().Snapshot()
+	fmt.Println("\n=== Device Stats ===")
+	fmt.Printf("Reads:        %d (%s)\n", stats.Reads, formatBytes(stats.BytesRead))
+	fmt.Printf("Writes:       %d (%s)\n", stats.Writes, formatBytes(stats.BytesWritten))
+	fmt.Printf("Flushes:      %d\n", stats.Flushes)
+	fmt.Printf("Discards:     %d\n", stats.Discards)
+	fmt.Printf("Write Zeroes: %d\n", stats.WriteZeroes)
+	if stats.ReadErrors > 0 || stats.WriteErrors > 0 || stats.OtherErrors > 0 {
+		fmt.Printf("Errors: read=%d write=%d other=%d\n",
+			stats.ReadErrors, stats.WriteErrors, stats.OtherErrors)
+	}
+	fmt.Println("====================")
+}
+
+func formatBytes(bytes uint64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
