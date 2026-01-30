@@ -84,6 +84,22 @@ func WithUnprivileged() DeviceOption {
 	}
 }
 
+// WithUserCopy enables user-copy mode (requires CAP_SYS_ADMIN).
+// In this mode, the ublk server uses pread()/pwrite() on the character device
+// to transfer data instead of using the mmap buffer. This allows:
+//   - Skipping data transfer entirely for operations that don't need it (FLUSH, DISCARD)
+//   - Copying directly to/from application buffers without intermediate copies
+//   - More control over when and if data is transferred
+//
+// For WRITE requests: call pread(chardev, buf, len, tag*bufsize) to get data.
+// For READ requests: call pwrite(chardev, buf, len, tag*bufsize) to send data.
+// For FLUSH/DISCARD: just complete the request, no pread/pwrite needed.
+func WithUserCopy() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_USER_COPY
+	}
+}
+
 // NewDevice creates a new ublk device instance.
 // It opens the control device but does not create the ublk device yet.
 //
@@ -168,6 +184,11 @@ func (d *Device) HasZeroCopy() bool {
 // HasAutoBufReg returns true if automatic buffer registration is enabled.
 func (d *Device) HasAutoBufReg() bool {
 	return d.flags&UBLK_F_AUTO_BUF_REG != 0
+}
+
+// HasUserCopy returns true if user-copy mode is enabled.
+func (d *Device) HasUserCopy() bool {
+	return d.flags&UBLK_F_USER_COPY != 0
 }
 
 func (d *Device) openCharDevice() error {

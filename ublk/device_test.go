@@ -120,6 +120,14 @@ func TestDeviceOptions(t *testing.T) {
 			t.Error("WithUnprivileged should set UBLK_F_UNPRIVILEGED_DEV")
 		}
 	})
+
+	t.Run("WithUserCopy", func(t *testing.T) {
+		d := &Device{}
+		WithUserCopy()(d)
+		if d.flags&UBLK_F_USER_COPY == 0 {
+			t.Error("WithUserCopy should set UBLK_F_USER_COPY")
+		}
+	})
 }
 
 // TestDeviceFeatureFlags tests the device feature flag constants.
@@ -148,7 +156,7 @@ func TestDeviceFeatureFlags(t *testing.T) {
 
 // TestDeviceHelpers tests the device helper methods.
 func TestDeviceHelpers(t *testing.T) {
-	d := &Device{flags: UBLK_F_SUPPORT_ZERO_COPY | UBLK_F_AUTO_BUF_REG}
+	d := &Device{flags: UBLK_F_SUPPORT_ZERO_COPY | UBLK_F_AUTO_BUF_REG | UBLK_F_USER_COPY}
 
 	if !d.HasZeroCopy() {
 		t.Error("HasZeroCopy() should return true")
@@ -158,8 +166,15 @@ func TestDeviceHelpers(t *testing.T) {
 		t.Error("HasAutoBufReg() should return true")
 	}
 
+	if !d.HasUserCopy() {
+		t.Error("HasUserCopy() should return true")
+	}
+
 	d2 := &Device{}
 	if d2.HasZeroCopy() {
 		t.Error("HasZeroCopy() should return false for default device")
+	}
+	if d2.HasUserCopy() {
+		t.Error("HasUserCopy() should return false for default device")
 	}
 }

@@ -78,6 +78,13 @@ type Config struct {
 	// and unregister buffers, eliminating manual buffer management.
 	AutoBufReg bool
 
+	// UserCopy enables user-copy mode where pread/pwrite on the char device
+	// transfers data instead of using the mmap buffer. This allows:
+	// - Skipping data transfer for FLUSH/DISCARD (just complete, no copy)
+	// - Direct copy to/from application buffers
+	// - More control over when data is transferred
+	UserCopy bool
+
 	// UserRecovery enables user-space recovery on ublk server crash.
 	// The block device survives server restarts without data loss.
 	UserRecovery bool
@@ -188,6 +195,9 @@ func CreateDevice(backend Backend, config Config) (*Device, error) {
 		opts = append(opts, WithAutoBufReg())
 	} else if config.ZeroCopy {
 		opts = append(opts, WithZeroCopy())
+	}
+	if config.UserCopy {
+		opts = append(opts, WithUserCopy())
 	}
 	if config.UserRecovery {
 		opts = append(opts, WithUserRecovery())
