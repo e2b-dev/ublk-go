@@ -28,9 +28,6 @@ CGO_ENABLED=1 go build ./...
 
 ### Unit tests (no root required)
 
-The test suite includes 61+ tests covering buffer layout, request parsing,
-descriptor handling, configuration, and type validation:
-
 ```bash
 go test ./...
 ```

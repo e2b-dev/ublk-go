@@ -131,36 +131,9 @@ See `example/main.go` for a complete example with an in-memory backend.
 
 ## Status
 
-**Current Status:**
+**100% pure Go** - no CGO or C dependencies required.
 
-- ✅ Control plane (device creation, configuration) - **Complete**
-- ✅ High-level API - **Complete**
-- ✅ IO plane (io_uring passthrough) - **Pure Go implementation**
-- ✅ Performance optimizations (SINGLE_ISSUER, DEFER_TASKRUN) - **Kernel 6.1+**
-- ✅ Zero-copy support - **Available (requires CAP_SYS_ADMIN)**
-
-The library is **100% pure Go** with no CGO or C dependencies. It provides:
-
-- Full control plane operations (add, start, stop, delete devices)
-- io_uring-based I/O handling with passthrough commands
-- Optimized io_uring setup with modern kernel flags
-- Buffer management for efficient data transfer
-- Support for multiple queues and concurrent I/O
-- Zero-allocation hot paths
-- Extended backend support (Flush, Discard, WriteZeroes)
-
-### Performance Features
-
-The library automatically uses modern io_uring features when available:
-
-| Feature | Kernel | Benefit |
-|---------|--------|---------|
-| `IORING_SETUP_SINGLE_ISSUER` | 6.0+ | Optimizes for single-thread submission |
-| `IORING_SETUP_DEFER_TASKRUN` | 6.1+ | Reduces context switches |
-| `UBLK_F_SUPPORT_ZERO_COPY` | 6.x | Eliminates data copies |
-| `UBLK_F_AUTO_BUF_REG` | 6.x | Automatic buffer management |
-
-See `BUILD.md` for build and test instructions.
+See `BUILD.md` for build instructions and `ARCHITECTURE.md` for design details.
 
 ## References
 

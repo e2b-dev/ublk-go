@@ -9,11 +9,10 @@ import (
 )
 
 // IO result codes (returned in EndIO field).
-// These map to negated Linux errno values where applicable.
 const (
-	IOResultOK      uint16 = 0  // Success
-	IOResultEIO     uint16 = 5  // I/O error (EIO)
-	IOResultENOTSUP uint16 = 95 // Operation not supported (EOPNOTSUPP)
+	IOResultOK      uint16 = 0  // EIO = 0
+	IOResultEIO     uint16 = 5  // EIO
+	IOResultENOTSUP uint16 = 95 // EOPNOTSUPP
 )
 
 // ioWorker handles IO operations for a specific queue.
@@ -114,17 +113,14 @@ func (w *ioWorker) eventLoop() {
 	pendingSubmit := 0
 
 	for {
-		// Check for stop signal (non-blocking)
 		select {
 		case <-w.device.stopCh:
 			return
 		default:
 		}
 
-		// Wait for a completion
 		cqe, err := w.ring.WaitCQE()
 		if err != nil {
-			// Check if we were interrupted by stop
 			select {
 			case <-w.device.stopCh:
 				return
@@ -134,15 +130,10 @@ func (w *ioWorker) eventLoop() {
 			}
 		}
 
-		// Extract tag from user data
 		tag := uint16(cqe.UserData)
-
-		// Mark CQE as seen before processing
 		w.ring.SeenCQE(cqe)
 
-		// Check result
 		if cqe.Res < 0 {
-			// Negative result typically means device is stopping
 			select {
 			case <-w.device.stopCh:
 				return
@@ -152,10 +143,8 @@ func (w *ioWorker) eventLoop() {
 			}
 		}
 
-		// We received a request - process it
 		w.handleRequest(tag)
 
-		// Submit COMMIT_AND_FETCH to complete this request and fetch next
 		desc := w.getIODesc(tag)
 		if err := w.submitCommitAndFetch(tag, desc); err != nil {
 			logf("Queue %d Tag %d: commitAndFetch failed: %v", w.qid, tag, err)
@@ -173,11 +162,9 @@ func (w *ioWorker) eventLoop() {
 	}
 }
 
-// handleRequest processes an IO request for a specific tag.
 func (w *ioWorker) handleRequest(tag uint16) {
 	desc := w.getIODesc(tag)
 
-	// Get request data
 	requestData, err := w.bufferMgr.GetRequestData(tag)
 	if err != nil {
 		logf("Queue %d Tag %d: failed to get request data: %v", w.qid, tag, err)
@@ -186,7 +173,6 @@ func (w *ioWorker) handleRequest(tag uint16) {
 		return
 	}
 
-	// Parse the request
 	req, err := ParseRequest(desc, requestData)
 	if err != nil {
 		logf("Queue %d Tag %d: failed to parse request: %v", w.qid, tag, err)
@@ -195,15 +181,13 @@ func (w *ioWorker) handleRequest(tag uint16) {
 		return
 	}
 
-	// Calculate offset and length
 	blockSize := w.device.params.Basic.LogicalBSize
 	if blockSize == 0 {
-		blockSize = 512 // fallback
+		blockSize = 512
 	}
 	offset := req.GetOffset(blockSize)
 	length := req.GetLength(blockSize)
 
-	// Get the buffer
 	buf, err := w.bufferMgr.GetIODescBuffer(desc)
 	if err != nil {
 		logf("Queue %d Tag %d: failed to get buffer: %v", w.qid, tag, err)
@@ -212,7 +196,6 @@ func (w *ioWorker) handleRequest(tag uint16) {
 		return
 	}
 
-	// Validate buffer size
 	if len(buf) < int(length) {
 		logf("Queue %d Tag %d: buffer too small: got %d, need %d", w.qid, tag, len(buf), length)
 		desc.EndIO = IOResultEIO
@@ -220,17 +203,12 @@ func (w *ioWorker) handleRequest(tag uint16) {
 		return
 	}
 
-	// Handle the operation
 	desc.EndIO = w.executeIO(req.Op, buf[:length], offset)
 	desc.OpFlags &^= UBLK_IO_F_FETCHED
-
-	// Record statistics
 	w.device.stats.recordOp(req.Op, uint64(length), desc.EndIO == IOResultOK)
-
 	w.setIODesc(tag, desc)
 }
 
-// executeIO performs the actual IO operation and returns the result code.
 func (w *ioWorker) executeIO(op uint8, buf []byte, offset int64) uint16 {
 	switch op {
 	case UBLK_IO_OP_READ:
@@ -248,33 +226,29 @@ func (w *ioWorker) executeIO(op uint8, buf []byte, offset int64) uint16 {
 		return IOResultOK
 
 	case UBLK_IO_OP_FLUSH:
-		// Check if backend supports Flush
 		if flusher, ok := w.device.backend.(Flusher); ok {
 			if err := flusher.Flush(); err != nil {
 				return IOResultEIO
 			}
 		}
-		return IOResultOK // Success (or no-op if not supported)
+		return IOResultOK
 
 	case UBLK_IO_OP_DISCARD:
-		// Check if backend supports Discard
 		if discarder, ok := w.device.backend.(Discarder); ok {
 			if err := discarder.Discard(offset, int64(len(buf))); err != nil {
 				return IOResultEIO
 			}
 			return IOResultOK
 		}
-		return IOResultENOTSUP // Not supported
+		return IOResultENOTSUP
 
 	case UBLK_IO_OP_WRITE_ZEROES:
-		// Check if backend supports WriteZeroes
 		if wz, ok := w.device.backend.(WriteZeroer); ok {
 			if err := wz.WriteZeroes(offset, int64(len(buf))); err != nil {
 				return IOResultEIO
 			}
 			return IOResultOK
 		}
-		// Fallback: write actual zeroes using clear() for efficiency
 		clear(buf)
 		n, err := w.device.writeAt(buf, offset)
 		if err != nil || n != len(buf) {
