@@ -52,7 +52,7 @@ import (
 	"io"
 )
 
-// Config holds configuration for creating a ublk device
+// Config holds configuration for creating a ublk device.
 type Config struct {
 	// BlockSize is the logical block size (typically 512 or 4096)
 	BlockSize uint64
@@ -70,7 +70,7 @@ type Config struct {
 	QueueDepth uint16
 }
 
-// DefaultConfig returns a default configuration
+// DefaultConfig returns a default configuration.
 func DefaultConfig() Config {
 	return Config{
 		BlockSize:  512,
@@ -197,7 +197,7 @@ func CreateDevice(backend Backend, config Config) (*Device, error) {
 }
 
 // ReaderAtWriterAt is a convenience type that implements Backend
-// using io.ReaderAt and io.WriterAt
+// using io.ReaderAt and io.WriterAt.
 type ReaderAtWriterAt struct {
 	ReaderAt io.ReaderAt
 	WriterAt io.WriterAt

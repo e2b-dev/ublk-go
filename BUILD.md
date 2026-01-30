@@ -83,6 +83,7 @@ golangci-lint fmt ./...
 ```
 
 The configuration (`.golangci.yml`) enables:
+
 - **gofumpt**: Stricter formatting than gofmt
 - **gci**: Import ordering (stdlib, external, local)
 - **revive**: Comprehensive linting

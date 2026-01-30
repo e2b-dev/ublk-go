@@ -2,7 +2,7 @@ package ublk
 
 import "unsafe"
 
-// UringSQE represents an io_uring submission queue entry
+// UringSQE represents an io_uring submission queue entry.
 type UringSQE struct {
 	Opcode      uint8
 	Flags       uint8
@@ -19,7 +19,7 @@ type UringSQE struct {
 	Addr2       [2]uint64
 }
 
-// UringCQE represents an io_uring completion queue entry
+// UringCQE represents an io_uring completion queue entry.
 type UringCQE struct {
 	UserData uint64
 	Res      int32
@@ -27,7 +27,7 @@ type UringCQE struct {
 	BigCQE   [2]uint64
 }
 
-// UringParams represents io_uring parameters
+// UringParams represents io_uring parameters.
 type UringParams struct {
 	SQEntries    uint32
 	CQEntries    uint32
@@ -65,17 +65,17 @@ type UringParamsCQ struct {
 	Resv2       uint64
 }
 
-// SizeOfUringSQE returns the size of struct io_uring_sqe
+// SizeOfUringSQE returns the size of struct io_uring_sqe.
 func SizeOfUringSQE() uintptr {
 	return unsafe.Sizeof(UringSQE{})
 }
 
-// SizeOfUringCQE returns the size of struct io_uring_cqe
+// SizeOfUringCQE returns the size of struct io_uring_cqe.
 func SizeOfUringCQE() uintptr {
 	return unsafe.Sizeof(UringCQE{})
 }
 
-// SizeOfUringParams returns the size of struct io_uring_params
+// SizeOfUringParams returns the size of struct io_uring_params.
 func SizeOfUringParams() uintptr {
 	return unsafe.Sizeof(UringParams{})
 }

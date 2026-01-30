@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestDeviceErrors tests error definitions
+// TestDeviceErrors tests error definitions.
 func TestDeviceErrors(t *testing.T) {
 	if ErrDeviceNotStarted == nil {
 		t.Error("ErrDeviceNotStarted should be defined")
@@ -20,7 +20,7 @@ func TestDeviceErrors(t *testing.T) {
 	}
 }
 
-// TestUblkCommand tests command creation
+// TestUblkCommand tests command creation.
 func TestUblkCommand(t *testing.T) {
 	cmd := NewFetchReqCommand(0, 0, 0)
 	if cmd.Op != UBLK_IO_FETCH_REQ {
@@ -36,7 +36,7 @@ func TestUblkCommand(t *testing.T) {
 	}
 }
 
-// TestUblkIOCommandBytes tests command serialization
+// TestUblkIOCommandBytes tests command serialization.
 func TestUblkIOCommandBytes(t *testing.T) {
 	cmd := NewFetchReqCommand(42, 7, 99)
 
@@ -61,7 +61,7 @@ func TestUblkIOCommandBytes(t *testing.T) {
 	}
 }
 
-// TestUblkIOCommandSize tests command size
+// TestUblkIOCommandSize tests command size.
 func TestUblkIOCommandSize(t *testing.T) {
 	cmd := NewFetchReqCommand(0, 0, 0)
 	size := cmd.Size()
@@ -74,7 +74,7 @@ func TestUblkIOCommandSize(t *testing.T) {
 	}
 }
 
-// TestErrInvalidRequest tests the ErrInvalidRequest error
+// TestErrInvalidRequest tests the ErrInvalidRequest error.
 func TestErrInvalidRequest(t *testing.T) {
 	if ErrInvalidRequest == nil {
 		t.Error("ErrInvalidRequest should not be nil")

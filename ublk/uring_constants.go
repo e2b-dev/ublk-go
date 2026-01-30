@@ -9,12 +9,12 @@ package ublk
 */
 import "C"
 
-// Constants from liburing/kernel headers
+// Constants from liburing/kernel headers.
 const (
 	IORING_OP_URING_CMD = C.IORING_OP_URING_CMD
 )
 
-// IORING_SETUP flags
+// IORING_SETUP flags for io_uring_setup().
 const (
 	IORING_SETUP_IOPOLL     = C.IORING_SETUP_IOPOLL
 	IORING_SETUP_SQPOLL     = C.IORING_SETUP_SQPOLL
@@ -25,14 +25,14 @@ const (
 	IORING_SETUP_R_DISABLED = C.IORING_SETUP_R_DISABLED
 )
 
-// IORING_ENTER flags
+// IORING_ENTER flags for io_uring_enter().
 const (
 	IORING_ENTER_GETEVENTS = C.IORING_ENTER_GETEVENTS
 	IORING_ENTER_SQ_WAKEUP = C.IORING_ENTER_SQ_WAKEUP
 	IORING_ENTER_SQ_WAIT   = C.IORING_ENTER_SQ_WAIT
 )
 
-// SQE flags
+// SQE flags for submission queue entries.
 const (
 	IOSQE_FIXED_FILE    = C.IOSQE_FIXED_FILE
 	IOSQE_IO_DRAIN      = C.IOSQE_IO_DRAIN
@@ -42,14 +42,14 @@ const (
 	IOSQE_BUFFER_SELECT = C.IOSQE_BUFFER_SELECT
 )
 
-// CQE flags
+// CQE flags for completion queue entries.
 const (
 	IORING_CQE_F_BUFFER        = C.IORING_CQE_F_BUFFER
 	IORING_CQE_F_MORE          = C.IORING_CQE_F_MORE
 	IORING_CQE_F_SOCK_NONEMPTY = C.IORING_CQE_F_SOCK_NONEMPTY
 )
 
-// IORING_OFF constants for mmap offsets
+// IORING_OFF constants for mmap offsets.
 const (
 	IORING_OFF_SQ_RING = 0
 	IORING_OFF_CQ_RING = 0x8000000

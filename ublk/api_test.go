@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestBackend is a test backend implementation
+// TestBackend is a test backend implementation.
 type TestBackend struct {
 	data []byte
 	size int64
@@ -52,7 +52,7 @@ func (b *TestBackend) GetData() []byte {
 	return b.data[:b.size]
 }
 
-// TestCreateDevice tests the CreateDevice function
+// TestCreateDevice tests the CreateDevice function.
 func TestCreateDevice(t *testing.T) {
 	backend := NewTestBackend(1024 * 1024) // 1MB
 
@@ -90,7 +90,7 @@ func TestCreateDevice(t *testing.T) {
 	t.Logf("Created device: %s (ID: %d)", blockPath, dev.DeviceID())
 }
 
-// TestDefaultConfig tests the default configuration
+// TestDefaultConfig tests the default configuration.
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
@@ -114,13 +114,13 @@ func TestDefaultConfig(t *testing.T) {
 		config.BlockSize, config.Size, config.NrHWQueues, config.QueueDepth)
 }
 
-// TestBackendInterface tests that TestBackend implements Backend
+// TestBackendInterface tests that TestBackend implements Backend.
 func TestBackendInterface(_ *testing.T) {
 	var _ Backend = (*TestBackend)(nil)
 	var _ Backend = (*ReaderAtWriterAt)(nil)
 }
 
-// TestReaderAtWriterAtNilHandling tests nil handling in ReaderAtWriterAt
+// TestReaderAtWriterAtNilHandling tests nil handling in ReaderAtWriterAt.
 func TestReaderAtWriterAtNilHandling(t *testing.T) {
 	// Test with nil ReaderAt
 	backend := &ReaderAtWriterAt{
@@ -144,7 +144,7 @@ func TestReaderAtWriterAtNilHandling(t *testing.T) {
 	}
 }
 
-// TestReaderAtWriterAt tests the ReaderAtWriterAt adapter
+// TestReaderAtWriterAt tests the ReaderAtWriterAt adapter.
 func TestReaderAtWriterAt(t *testing.T) {
 	backend := &ReaderAtWriterAt{
 		ReaderAt: &TestBackend{data: []byte("test"), size: 4},
@@ -172,7 +172,7 @@ func TestReaderAtWriterAt(t *testing.T) {
 	}
 }
 
-// TestConfigValidation tests configuration validation
+// TestConfigValidation tests configuration validation.
 func TestConfigValidation(t *testing.T) {
 	backend := NewTestBackend(1024)
 
@@ -233,7 +233,7 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
-// TestDeviceLifecycle tests the device lifecycle (without actually creating)
+// TestDeviceLifecycle tests the device lifecycle (without actually creating).
 func TestDeviceLifecycle(t *testing.T) {
 	backend := NewTestBackend(1024)
 
@@ -279,7 +279,7 @@ func TestDeviceLifecycle(t *testing.T) {
 	}
 }
 
-// TestBackendOperations tests backend read/write operations
+// TestBackendOperations tests backend read/write operations.
 func TestBackendOperations(t *testing.T) {
 	backend := NewTestBackend(1024)
 
@@ -313,7 +313,7 @@ func TestBackendOperations(t *testing.T) {
 	}
 }
 
-// TestConfigDefaults tests that CreateDevice applies defaults
+// TestConfigDefaults tests that CreateDevice applies defaults.
 func TestConfigDefaults(t *testing.T) {
 	backend := NewTestBackend(1024)
 
@@ -346,7 +346,7 @@ func TestConfigDefaults(t *testing.T) {
 	// don't affect our copy. This is fine - defaults are applied internally.
 }
 
-// TestConfigValidate tests the Config.validate() method directly
+// TestConfigValidate tests the Config.validate() method directly.
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -424,7 +424,7 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-// TestExtendedBackendInterfaces tests the optional interfaces
+// TestExtendedBackendInterfaces tests the optional interfaces.
 func TestExtendedBackendInterfaces(t *testing.T) {
 	// Test that types implement expected interfaces
 	var _ Backend = (*TestBackend)(nil)
@@ -449,7 +449,7 @@ func TestExtendedBackendInterfaces(t *testing.T) {
 	}
 }
 
-// ExtendedTestBackend implements all optional interfaces
+// ExtendedTestBackend implements all optional interfaces.
 type ExtendedTestBackend struct {
 	TestBackend
 

@@ -27,7 +27,7 @@ type Ring struct {
 	mmapSQEs []byte
 }
 
-// submissionQueue represents the mapped submission queue
+// submissionQueue represents the mapped submission queue.
 type submissionQueue struct {
 	head        *uint32
 	tail        *uint32
@@ -40,7 +40,7 @@ type submissionQueue struct {
 	sqeTail     uint32
 }
 
-// completionQueue represents the mapped completion queue
+// completionQueue represents the mapped completion queue.
 type completionQueue struct {
 	head        *uint32
 	tail        *uint32
@@ -50,7 +50,7 @@ type completionQueue struct {
 	cqes        []UringCQE
 }
 
-// NewRing creates a new io_uring instance
+// NewRing creates a new io_uring instance.
 func NewRing(entries uint, flags uint) (*Ring, error) {
 	entries = roundUpPow2(entries)
 	if entries < 1 || entries > 4096 {
@@ -145,7 +145,7 @@ func (r *Ring) mmapRings(entries uint) error {
 	return nil
 }
 
-// Close releases resources associated with the ring
+// Close releases resources associated with the ring.
 func (r *Ring) Close() error {
 	if r.fd < 0 {
 		return nil
@@ -166,7 +166,7 @@ func (r *Ring) Close() error {
 	return nil
 }
 
-// GetSQE gets a new submission queue entry
+// GetSQE gets a new submission queue entry.
 func (r *Ring) GetSQE() (*UringSQE, error) {
 	head := r.sq.sqeHead
 	tail := r.sq.sqeTail
@@ -182,7 +182,7 @@ func (r *Ring) GetSQE() (*UringSQE, error) {
 	return sqe, nil
 }
 
-// Submit submits all pending SQEs
+// Submit submits all pending SQEs.
 func (r *Ring) Submit() (int, error) {
 	tail := r.sq.sqeTail
 	head := r.sq.sqeHead
@@ -221,7 +221,7 @@ func (r *Ring) Submit() (int, error) {
 	return int(ret), nil
 }
 
-// WaitCQE waits for a completion queue entry
+// WaitCQE waits for a completion queue entry.
 func (r *Ring) WaitCQE() (*UringCQE, error) {
 	for {
 		// Check if CQE is available using atomic load
@@ -250,7 +250,7 @@ func (r *Ring) WaitCQE() (*UringCQE, error) {
 	}
 }
 
-// SeenCQE advances the completion queue head
+// SeenCQE advances the completion queue head.
 func (r *Ring) SeenCQE(_ *UringCQE) {
 	atomic.AddUint32(r.cq.head, 1)
 }

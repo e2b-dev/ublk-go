@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestRingRoundUpPow2 tests the power of 2 rounding function
+// TestRingRoundUpPow2 tests the power of 2 rounding function.
 func TestRingRoundUpPow2(t *testing.T) {
 	tests := []struct {
 		input  uint
@@ -34,7 +34,7 @@ func TestRingRoundUpPow2(t *testing.T) {
 	}
 }
 
-// TestNewRingInvalidEntries tests Ring creation with invalid entries
+// TestNewRingInvalidEntries tests Ring creation with invalid entries.
 func TestNewRingInvalidEntries(t *testing.T) {
 	// Entries > 4096 should fail (after rounding up)
 	_, err := NewRing(5000, 0)
@@ -45,7 +45,7 @@ func TestNewRingInvalidEntries(t *testing.T) {
 	// Note: 0 entries gets rounded up to 1 by roundUpPow2, which is valid
 }
 
-// TestNewRingValidEntries tests Ring creation - will fail without kernel but validates API
+// TestNewRingValidEntries tests Ring creation - will fail without kernel but validates API.
 func TestNewRingValidEntries(t *testing.T) {
 	// This will fail without io_uring support, but we're testing the API
 	ring, err := NewRing(64, 0)

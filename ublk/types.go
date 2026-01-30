@@ -42,7 +42,7 @@ const (
 	UBLK_F_AUTO_BUF_REG      = 1 << 4
 )
 
-// UblkParams represents device parameters
+// UblkParams represents device parameters.
 type UblkParams struct {
 	Basic struct {
 		LogicalBSize  uint32
@@ -61,12 +61,12 @@ type UblkParams struct {
 	}
 }
 
-// UblkDevInfo represents device information
+// UblkDevInfo represents device information.
 type UblkDevInfo struct {
 	UblksrvCtrlDevInfo
 }
 
-// UblksrvCtrlDevInfo is the control device info structure
+// UblksrvCtrlDevInfo is the control device info structure.
 type UblksrvCtrlDevInfo struct {
 	NrHWQueues    uint16
 	QueueDepth    uint16
@@ -79,7 +79,7 @@ type UblksrvCtrlDevInfo struct {
 	Reserved1     [32]uint64
 }
 
-// UblksrvIODesc represents an IO descriptor
+// UblksrvIODesc represents an IO descriptor.
 type UblksrvIODesc struct {
 	Addr     uint64
 	Length   uint32
@@ -90,7 +90,7 @@ type UblksrvIODesc struct {
 	Reserved [4]uint64
 }
 
-// UblkQueueAffinity represents queue affinity information
+// UblkQueueAffinity represents queue affinity information.
 type UblkQueueAffinity struct {
 	QID      uint16
 	Pad      [3]uint16

@@ -26,9 +26,7 @@ linters:
     - gochecknoglobals
     - gochecknoinits
     - gocognit
-    - goconst
     - gocyclo
-    - godot
     - godox
     - gomoddirectives
     - gomodguard
@@ -42,20 +40,17 @@ linters:
     - noinlineerr     # Inline error handling is idiomatic Go
     - nonamedreturns
     - paralleltest    # Not all tests can run in parallel
-    - prealloc
     - tagliatelle
     - testpackage
-    - unparam
     - varnamelen
     - wrapcheck
 
     # Security checks that don't apply to this kernel-interface code
     - gosec
 
-    # TODO: enable these later
-    - err113
-    - forcetypeassert
-    - godoclint
+    # These require more work to enable
+    - err113          # Requires defining error types
+    - godoclint       # Strict doc comments
 
     # Deprecated
     - wsl

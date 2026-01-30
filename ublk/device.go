@@ -188,8 +188,9 @@ func (d *Device) stopLocked() error {
 
 	// 1. Tell kernel to stop sending requests
 	// This cancels pending IOs and unblocks workers waiting on ring
+	var stopErr error
 	if err := d.ioctl(UBLK_CMD_STOP_DEV, 0); err != nil {
-		logf("Warning: UBLK_CMD_STOP_DEV failed: %v", err)
+		stopErr = fmt.Errorf("UBLK_CMD_STOP_DEV failed: %w", err)
 	}
 
 	// 2. Signal workers to stop (only once)
@@ -207,7 +208,7 @@ func (d *Device) stopLocked() error {
 	d.workers = nil
 	d.started = false
 
-	return nil
+	return stopErr
 }
 
 // Delete removes the device (UBLK_CMD_DEL_DEV) and closes file descriptors.
