@@ -128,7 +128,7 @@ func (d *Device) Start() error {
 		return ErrDeviceAlreadyStarted
 	}
 	if d.charDevFD == nil {
-		return ErrDeviceNotStarted
+		return ErrCharDevNotOpen
 	}
 
 	if err := d.ioctl(UBLK_CMD_START_DEV, 0); err != nil {

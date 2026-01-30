@@ -1,7 +1,5 @@
 module github.com/ublk-go/ublk
 
-go 1.24.0
-
-toolchain go1.24.10
+go 1.25.6
 
 require golang.org/x/sys v0.38.0

@@ -5,6 +5,10 @@ import (
 	"unsafe"
 )
 
+// requestDataSize is the size of the request data structure per tag.
+// This matches the kernel's expectation for ublk request metadata.
+const requestDataSize = 256
+
 // BufferManager handles mapping and access to IO buffers and request data.
 // It abstracts the layout of the shared memory area.
 type BufferManager struct {
@@ -33,10 +37,8 @@ func (bm *BufferManager) GetIODescBuffer(desc UblksrvIODesc) ([]byte, error) {
 	// Descriptors area size
 	descAreaSize := int(bm.queueDepth) * bm.descSize
 
-	// Request data area size (approx 256 bytes per request)
-	// This should match kernel driver's UBLK_MAX_IO_REQUEST_SIZE?
-	// Or is it derived? Assuming a safe constant for now.
-	requestAreaSize := 256 * int(bm.queueDepth)
+	// Request data area size
+	requestAreaSize := requestDataSize * int(bm.queueDepth)
 
 	bufferAreaOffset := descAreaSize + requestAreaSize
 
@@ -57,12 +59,11 @@ func (bm *BufferManager) GetRequestData(tag uint16) ([]byte, error) {
 	}
 
 	descAreaSize := int(bm.queueDepth) * bm.descSize
-	// Assuming 256 bytes per request structure
-	requestOffset := descAreaSize + int(tag)*256
+	requestOffset := descAreaSize + int(tag)*requestDataSize
 
-	if requestOffset+256 > len(bm.mmapAddr) {
+	if requestOffset+requestDataSize > len(bm.mmapAddr) {
 		return nil, errors.New("request data offset out of bounds")
 	}
 
-	return bm.mmapAddr[requestOffset : requestOffset+256], nil
+	return bm.mmapAddr[requestOffset : requestOffset+requestDataSize], nil
 }

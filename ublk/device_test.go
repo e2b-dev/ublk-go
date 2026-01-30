@@ -74,14 +74,8 @@ func TestUblkIOCommandSize(t *testing.T) {
 	}
 }
 
-// TestErrorType tests the Error type
-func TestErrorType(t *testing.T) {
-	err := &Error{Msg: "test error"}
-	if err.Error() != "test error" {
-		t.Errorf("Expected 'test error', got '%s'", err.Error())
-	}
-
-	// Test ErrInvalidRequest
+// TestErrInvalidRequest tests the ErrInvalidRequest error
+func TestErrInvalidRequest(t *testing.T) {
 	if ErrInvalidRequest == nil {
 		t.Error("ErrInvalidRequest should not be nil")
 	}

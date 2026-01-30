@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -199,9 +200,8 @@ func (r *Ring) Submit() (int, error) {
 		*(*uint32)(unsafe.Pointer(uintptr(unsafe.Pointer(r.sq.array)) + offset)) = idx
 	}
 
-	// Update tail and our local head
-	// Memory barrier needed here ideally
-	*r.sq.tail = tail
+	// Update tail with a store barrier to ensure SQE writes are visible
+	atomic.StoreUint32(r.sq.tail, tail)
 	r.sq.sqeHead = tail
 
 	// Enter kernel
@@ -225,10 +225,12 @@ func (r *Ring) Submit() (int, error) {
 // WaitCQE waits for a completion queue entry
 func (r *Ring) WaitCQE() (*UringCQE, error) {
 	for {
-		// Check if CQE is available
-		head := *r.cq.head
-		if head != *r.cq.tail {
-			cqe := &r.cq.cqes[head&*r.cq.ringMask]
+		// Check if CQE is available using atomic load
+		head := atomic.LoadUint32(r.cq.head)
+		tail := atomic.LoadUint32(r.cq.tail)
+		if head != tail {
+			mask := atomic.LoadUint32(r.cq.ringMask)
+			cqe := &r.cq.cqes[head&mask]
 			return cqe, nil
 		}
 
@@ -251,7 +253,7 @@ func (r *Ring) WaitCQE() (*UringCQE, error) {
 
 // SeenCQE advances the completion queue head
 func (r *Ring) SeenCQE(cqe *UringCQE) {
-	*r.cq.head++
+	atomic.AddUint32(r.cq.head, 1)
 }
 
 // Helpers

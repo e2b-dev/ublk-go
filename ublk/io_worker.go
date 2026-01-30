@@ -145,22 +145,19 @@ func (w *ioWorker) handleIO(tag uint16, desc UblksrvIODesc) {
 		return
 	}
 
-	var n int
-	var ioErr error
-
 	// Handle the operation
 	switch req.Op {
 	case UBLK_IO_OP_READ:
-		n, ioErr = w.device.readAt(buf[:length], offset)
-		if ioErr == nil && n == int(length) {
+		n, err := w.device.readAt(buf[:length], offset)
+		if err == nil && n == int(length) {
 			desc.EndIO = 0 // Success
 		} else {
 			desc.EndIO = 1 // Error
 		}
 	case UBLK_IO_OP_WRITE:
 		// For write, data should already be in the buffer
-		n, ioErr = w.device.writeAt(buf[:length], offset)
-		if ioErr == nil && n == int(length) {
+		n, err := w.device.writeAt(buf[:length], offset)
+		if err == nil && n == int(length) {
 			desc.EndIO = 0 // Success
 		} else {
 			desc.EndIO = 1 // Error
@@ -223,7 +220,8 @@ func (w *ioWorker) submitCommand(sqe *UringSQE, cmd *UblkIOCommand, tag uint16) 
 	sqe.Len = uint32(cmd.Size())
 	sqe.UserData = uint64(tag)
 
-	w.ring.Submit()
+	// Submit ignoring count return - we submitted exactly one
+	_, _ = w.ring.Submit()
 }
 
 func (w *ioWorker) waitForCompletion() error {
@@ -244,7 +242,7 @@ func (w *ioWorker) mmapIODescs() error {
 	// Layout: [IO Descriptors] [Request Data] [Buffers]
 	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
 	descAreaSize := int(w.queueDepth) * descSize
-	requestAreaSize := 256 * int(w.queueDepth) // 256 bytes per request structure
+	requestAreaSize := requestDataSize * int(w.queueDepth)
 
 	// Buffer area size comes from device info
 	maxIOBufBytes := int(w.device.info.MaxIOBufBytes)
