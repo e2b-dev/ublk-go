@@ -5,11 +5,13 @@
 // - ublk kernel module loaded (modprobe ublk_drv)
 //
 // Run with: sudo go test -tags=integration -v ./ublk -run=Integration
+// Or use:   sudo make test-integration
 
 package ublk
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +22,13 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func init() {
+	// Check prerequisites at test initialization
+	if os.Getuid() != 0 {
+		fmt.Fprintln(os.Stderr, "WARNING: Integration tests require root privileges")
+	}
+}
 
 // integrationBackend is a thread-safe in-memory backend for integration tests.
 type integrationBackend struct {
@@ -421,5 +430,347 @@ func TestIntegrationConcurrentIO(t *testing.T) {
 
 	if errCount == 0 {
 		t.Log("Concurrent I/O test passed")
+	}
+}
+
+// TestIntegrationRandomIO tests random read/write patterns.
+func TestIntegrationRandomIO(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	const deviceSize = 32 * 1024 * 1024 // 32MB
+	const blockSize = 4096
+	const numOps = 200
+
+	backend := newIntegrationBackend(deviceSize)
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = blockSize
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
+	if err != nil {
+		t.Fatalf("Failed to open block device: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Random I/O test
+	buf := make([]byte, blockSize)
+	readBuf := make([]byte, blockSize)
+
+	for i := 0; i < numOps; i++ {
+		// Random offset (block-aligned)
+		var offsetBytes [8]byte
+		rand.Read(offsetBytes[:])
+		offset := int64(offsetBytes[0]|offsetBytes[1]<<8) * blockSize
+		offset = offset % (deviceSize - blockSize)
+		offset = (offset / blockSize) * blockSize // Ensure alignment
+
+		// Random data
+		rand.Read(buf)
+
+		// Write
+		n, err := unix.Pwrite(fd, buf, offset)
+		if err != nil {
+			t.Fatalf("Write %d failed at offset %d: %v", i, offset, err)
+		}
+		if n != blockSize {
+			t.Fatalf("Short write: %d", n)
+		}
+
+		// Read back
+		n, err = unix.Pread(fd, readBuf, offset)
+		if err != nil {
+			t.Fatalf("Read %d failed at offset %d: %v", i, offset, err)
+		}
+		if n != blockSize {
+			t.Fatalf("Short read: %d", n)
+		}
+
+		// Verify
+		if !bytes.Equal(buf, readBuf) {
+			t.Fatalf("Data mismatch at operation %d, offset %d", i, offset)
+		}
+	}
+
+	t.Logf("Random I/O test passed: %d operations", numOps)
+}
+
+// TestIntegrationMultipleDevices tests creating multiple devices.
+func TestIntegrationMultipleDevices(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	const deviceSize = 8 * 1024 * 1024 // 8MB each
+	const numDevices = 3
+
+	devices := make([]*Device, numDevices)
+	backends := make([]*integrationBackend, numDevices)
+
+	// Create multiple devices
+	for i := 0; i < numDevices; i++ {
+		backends[i] = newIntegrationBackend(deviceSize)
+
+		config := DefaultConfig()
+		config.Size = deviceSize
+		config.BlockSize = 4096
+		config.NrHWQueues = 1
+		config.QueueDepth = 32
+
+		dev, err := CreateDevice(backends[i], config)
+		if err != nil {
+			// Clean up already created devices
+			for j := 0; j < i; j++ {
+				devices[j].Delete()
+			}
+			t.Fatalf("CreateDevice %d failed: %v", i, err)
+		}
+		devices[i] = dev
+		t.Logf("Created device %d: %s", i, dev.BlockDevicePath())
+	}
+
+	// Clean up all devices
+	defer func() {
+		for i, dev := range devices {
+			if dev != nil {
+				if err := dev.Delete(); err != nil {
+					t.Logf("Warning: failed to delete device %d: %v", i, err)
+				}
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Write unique data to each device
+	for i, dev := range devices {
+		fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
+		if err != nil {
+			t.Fatalf("Failed to open device %d: %v", i, err)
+		}
+
+		pattern := bytes.Repeat([]byte{byte(i + 1)}, 4096)
+		n, err := unix.Pwrite(fd, pattern, 0)
+		unix.Close(fd)
+
+		if err != nil || n != len(pattern) {
+			t.Fatalf("Write to device %d failed: %v", i, err)
+		}
+	}
+
+	// Verify each device has correct data
+	for i, dev := range devices {
+		fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
+		if err != nil {
+			t.Fatalf("Failed to open device %d for read: %v", i, err)
+		}
+
+		buf := make([]byte, 4096)
+		n, err := unix.Pread(fd, buf, 0)
+		unix.Close(fd)
+
+		if err != nil || n != len(buf) {
+			t.Fatalf("Read from device %d failed: %v", i, err)
+		}
+
+		expected := bytes.Repeat([]byte{byte(i + 1)}, 4096)
+		if !bytes.Equal(buf, expected) {
+			t.Fatalf("Device %d data mismatch", i)
+		}
+	}
+
+	t.Logf("Multiple devices test passed: %d devices", numDevices)
+}
+
+// TestIntegrationFlush tests the flush operation.
+func TestIntegrationFlush(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	const deviceSize = 16 * 1024 * 1024
+
+	flushCount := 0
+	backend := &flushTestBackend{
+		integrationBackend: newIntegrationBackend(deviceSize),
+		flushCount:         &flushCount,
+	}
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = 4096
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Open with O_SYNC to trigger flushes
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
+	if err != nil {
+		t.Fatalf("Failed to open: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Write data
+	buf := make([]byte, 4096)
+	rand.Read(buf)
+	_, err = unix.Pwrite(fd, buf, 0)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Sync should trigger flush
+	err = unix.Fsync(fd)
+	if err != nil {
+		t.Fatalf("Fsync failed: %v", err)
+	}
+
+	// Give time for flush to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	t.Logf("Flush test passed, flush count: %d", flushCount)
+}
+
+type flushTestBackend struct {
+	*integrationBackend
+	flushCount *int
+}
+
+func (b *flushTestBackend) Flush() error {
+	*b.flushCount++
+	return nil
+}
+
+// TestIntegrationStress runs a stress test with many operations.
+func TestIntegrationStress(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+
+	const deviceSize = 64 * 1024 * 1024 // 64MB
+	const blockSize = 4096
+	const duration = 5 * time.Second
+	const numWorkers = 4
+
+	backend := newIntegrationBackend(deviceSize)
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = blockSize
+	config.NrHWQueues = 1
+	config.QueueDepth = 128
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	var totalOps int64
+	var totalErrors int64
+	var mu sync.Mutex
+
+	// Start workers
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+			if err != nil {
+				mu.Lock()
+				totalErrors++
+				mu.Unlock()
+				return
+			}
+			defer unix.Close(fd)
+
+			buf := make([]byte, blockSize)
+			ops := int64(0)
+			errors := int64(0)
+
+			for {
+				select {
+				case <-stopCh:
+					mu.Lock()
+					totalOps += ops
+					totalErrors += errors
+					mu.Unlock()
+					return
+				default:
+				}
+
+				// Random offset
+				var offsetBytes [2]byte
+				rand.Read(offsetBytes[:])
+				offset := int64(offsetBytes[0]|offsetBytes[1]<<8) * blockSize
+				offset = offset % (deviceSize - blockSize)
+
+				// Random operation
+				var opByte [1]byte
+				rand.Read(opByte[:])
+
+				if opByte[0]%2 == 0 {
+					// Write
+					rand.Read(buf)
+					_, err := unix.Pwrite(fd, buf, offset)
+					if err != nil {
+						errors++
+					}
+				} else {
+					// Read
+					_, err := unix.Pread(fd, buf, offset)
+					if err != nil {
+						errors++
+					}
+				}
+				ops++
+			}
+		}(w)
+	}
+
+	// Run for duration
+	time.Sleep(duration)
+	close(stopCh)
+	wg.Wait()
+
+	stats := dev.Stats().Snapshot()
+	opsPerSec := float64(totalOps) / duration.Seconds()
+
+	t.Logf("Stress test completed:")
+	t.Logf("  Duration: %v", duration)
+	t.Logf("  Workers: %d", numWorkers)
+	t.Logf("  Total ops: %d (%.0f ops/sec)", totalOps, opsPerSec)
+	t.Logf("  Errors: %d", totalErrors)
+	t.Logf("  Stats: reads=%d writes=%d", stats.Reads, stats.Writes)
+
+	if totalErrors > 0 {
+		t.Errorf("Stress test had %d errors", totalErrors)
 	}
 }

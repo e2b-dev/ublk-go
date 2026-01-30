@@ -38,6 +38,7 @@ func TestIOFlagConstants(t *testing.T) {
 
 func TestCommandConstants(t *testing.T) {
 	t.Parallel()
+	// Test raw command numbers
 	cmds := []uint32{
 		UBLK_CMD_ADD_DEV,
 		UBLK_CMD_DEL_DEV,
@@ -45,14 +46,32 @@ func TestCommandConstants(t *testing.T) {
 		UBLK_CMD_STOP_DEV,
 		UBLK_CMD_SET_PARAMS,
 		UBLK_CMD_GET_PARAMS,
-		UBLK_CMD_GET_QUEUE_AFFINITY,
-		UBLK_CMD_GET_DEV_INFO,
-		UBLK_CMD_GET_DEV_INFO2,
 	}
 
 	for _, cmd := range cmds {
 		if cmd == 0 {
 			t.Error("Control command should not be zero")
+		}
+	}
+
+	// Test ioctl-encoded commands
+	encodedCmds := []uintptr{
+		UBLK_U_CMD_ADD_DEV,
+		UBLK_U_CMD_DEL_DEV,
+		UBLK_U_CMD_START_DEV,
+		UBLK_U_CMD_STOP_DEV,
+		UBLK_U_CMD_SET_PARAMS,
+		UBLK_U_CMD_GET_PARAMS,
+		UBLK_U_CMD_GET_DEV_INFO,
+	}
+
+	for _, cmd := range encodedCmds {
+		if cmd == 0 {
+			t.Error("Encoded control command should not be zero")
+		}
+		// Ioctl-encoded commands have the type 'u' (0x75) at bits 8-15
+		if (cmd>>8)&0xFF != 'u' {
+			t.Errorf("Encoded command 0x%x should have type 'u'", cmd)
 		}
 	}
 }
@@ -79,20 +98,29 @@ func TestIOCommandConstants(t *testing.T) {
 
 func TestDeviceFlagConstants(t *testing.T) {
 	t.Parallel()
-	flags := []uint32{
-		UBLK_F_SUPPORT_ZERO_COPY,
-		UBLK_F_NEED_GET_DATA,
-		UBLK_F_UNPRIVILEGED_DEV,
-		UBLK_F_PER_IO_DAEMON,
-		UBLK_F_AUTO_BUF_REG,
+	// Test that flags are powers of 2 and match expected values
+	flagTests := []struct {
+		name     string
+		flag     uint64
+		expected uint64
+	}{
+		{"UBLK_F_SUPPORT_ZERO_COPY", UBLK_F_SUPPORT_ZERO_COPY, 1 << 0},
+		{"UBLK_F_URING_CMD_COMP_IN_TASK", UBLK_F_URING_CMD_COMP_IN_TASK, 1 << 1},
+		{"UBLK_F_NEED_GET_DATA", UBLK_F_NEED_GET_DATA, 1 << 2},
+		{"UBLK_F_USER_RECOVERY", UBLK_F_USER_RECOVERY, 1 << 3},
+		{"UBLK_F_UNPRIVILEGED_DEV", UBLK_F_UNPRIVILEGED_DEV, 1 << 5},
+		{"UBLK_F_CMD_IOCTL_ENCODE", UBLK_F_CMD_IOCTL_ENCODE, 1 << 6},
+		{"UBLK_F_USER_COPY", UBLK_F_USER_COPY, 1 << 7},
+		{"UBLK_F_AUTO_BUF_REG", UBLK_F_AUTO_BUF_REG, 1 << 11},
+		{"UBLK_F_PER_IO_DAEMON", UBLK_F_PER_IO_DAEMON, 1 << 13},
 	}
 
-	for i, f := range flags {
-		if f == 0 {
-			t.Errorf("Device flag %d should not be zero", i)
+	for _, tt := range flagTests {
+		if tt.flag != tt.expected {
+			t.Errorf("%s = 0x%x, expected 0x%x", tt.name, tt.flag, tt.expected)
 		}
-		if f&(f-1) != 0 {
-			t.Errorf("Device flag %d (0x%x) is not a power of 2", i, f)
+		if tt.flag&(tt.flag-1) != 0 {
+			t.Errorf("%s (0x%x) is not a power of 2", tt.name, tt.flag)
 		}
 	}
 }

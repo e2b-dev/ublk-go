@@ -55,17 +55,20 @@ ublk/
 
 ## Components
 
-### Control Plane (`device.go`)
+### Control Plane (`device.go`, `control_ring.go`)
 
-Manages device lifecycle via ioctl on `/dev/ublk-control`:
+Manages device lifecycle via io_uring URING_CMD on `/dev/ublk-control`:
 
-| Operation | ioctl | Description |
-|-----------|-------|-------------|
-| Add | `UBLK_CMD_ADD_DEV` | Register device with kernel |
-| SetParams | `UBLK_CMD_SET_PARAMS` | Configure size, block size |
-| Start | `UBLK_CMD_START_DEV` | Activate device |
-| Stop | `UBLK_CMD_STOP_DEV` | Deactivate device |
-| Delete | `UBLK_CMD_DEL_DEV` | Remove device |
+| Operation | Command | Description |
+|-----------|---------|-------------|
+| Add | `UBLK_U_CMD_ADD_DEV` | Register device with kernel |
+| SetParams | `UBLK_U_CMD_SET_PARAMS` | Configure size, block size |
+| Start | `UBLK_U_CMD_START_DEV` | Activate device |
+| Stop | `UBLK_U_CMD_STOP_DEV` | Deactivate device |
+| Delete | `UBLK_U_CMD_DEL_DEV` | Remove device |
+
+**Note:** Control commands use io_uring passthrough (`IORING_OP_URING_CMD`), not ioctl.
+Requires `IORING_SETUP_SQE128` for the 80-byte command payload.
 
 ### IO Plane (`ring.go`, `io_worker.go`)
 

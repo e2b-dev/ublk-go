@@ -43,3 +43,4 @@ __debug_bin*
 *.temp
 tmp/
 temp/
+mmap_test

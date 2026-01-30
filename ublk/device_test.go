@@ -137,17 +137,24 @@ func TestDeviceOptions(t *testing.T) {
 
 func TestDeviceFeatureFlags(t *testing.T) {
 	t.Parallel()
+	// Test that flags match kernel values from linux/ublk_cmd.h
 	tests := []struct {
 		name  string
-		value uint32
-		want  uint32
+		value uint64
+		want  uint64
 	}{
 		{"UBLK_F_SUPPORT_ZERO_COPY", UBLK_F_SUPPORT_ZERO_COPY, 1 << 0},
-		{"UBLK_F_NEED_GET_DATA", UBLK_F_NEED_GET_DATA, 1 << 1},
-		{"UBLK_F_UNPRIVILEGED_DEV", UBLK_F_UNPRIVILEGED_DEV, 1 << 2},
-		{"UBLK_F_PER_IO_DAEMON", UBLK_F_PER_IO_DAEMON, 1 << 3},
-		{"UBLK_F_AUTO_BUF_REG", UBLK_F_AUTO_BUF_REG, 1 << 4},
-		{"UBLK_F_USER_RECOVERY", UBLK_F_USER_RECOVERY, 1 << 5},
+		{"UBLK_F_URING_CMD_COMP_IN_TASK", UBLK_F_URING_CMD_COMP_IN_TASK, 1 << 1},
+		{"UBLK_F_NEED_GET_DATA", UBLK_F_NEED_GET_DATA, 1 << 2},
+		{"UBLK_F_USER_RECOVERY", UBLK_F_USER_RECOVERY, 1 << 3},
+		{"UBLK_F_USER_RECOVERY_REISSUE", UBLK_F_USER_RECOVERY_REISSUE, 1 << 4},
+		{"UBLK_F_UNPRIVILEGED_DEV", UBLK_F_UNPRIVILEGED_DEV, 1 << 5},
+		{"UBLK_F_CMD_IOCTL_ENCODE", UBLK_F_CMD_IOCTL_ENCODE, 1 << 6},
+		{"UBLK_F_USER_COPY", UBLK_F_USER_COPY, 1 << 7},
+		{"UBLK_F_ZONED", UBLK_F_ZONED, 1 << 8},
+		{"UBLK_F_USER_RECOVERY_FAIL_IO", UBLK_F_USER_RECOVERY_FAIL_IO, 1 << 9},
+		{"UBLK_F_AUTO_BUF_REG", UBLK_F_AUTO_BUF_REG, 1 << 11},
+		{"UBLK_F_PER_IO_DAEMON", UBLK_F_PER_IO_DAEMON, 1 << 13},
 	}
 
 	for _, tt := range tests {

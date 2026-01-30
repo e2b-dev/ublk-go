@@ -16,17 +16,7 @@ const (
 	UBLK_IO_F_NEED_GET_DATA = 1 << 1
 )
 
-const (
-	UBLK_CMD_ADD_DEV            = 0x4701
-	UBLK_CMD_DEL_DEV            = 0x4702
-	UBLK_CMD_START_DEV          = 0x4703
-	UBLK_CMD_STOP_DEV           = 0x4704
-	UBLK_CMD_SET_PARAMS         = 0x4705
-	UBLK_CMD_GET_PARAMS         = 0x4706
-	UBLK_CMD_GET_QUEUE_AFFINITY = 0x4707
-	UBLK_CMD_GET_DEV_INFO       = 0x4708
-	UBLK_CMD_GET_DEV_INFO2      = 0x4709
-)
+// Legacy command constants - use UBLK_U_CMD_* from ioctl.go instead.
 
 // IO commands for io_uring passthrough.
 const (
@@ -38,18 +28,22 @@ const (
 )
 
 // Device feature flags (passed to UBLK_CMD_ADD_DEV).
+// Values from linux/ublk_cmd.h.
 const (
-	UBLK_F_SUPPORT_ZERO_COPY     = 1 << 0  // Enable zero-copy support
-	UBLK_F_NEED_GET_DATA         = 1 << 1  // Deferred write data fetching
-	UBLK_F_UNPRIVILEGED_DEV      = 1 << 2  // Allow unprivileged device control
-	UBLK_F_PER_IO_DAEMON         = 1 << 3  // Per-IO daemon support
-	UBLK_F_AUTO_BUF_REG          = 1 << 4  // Automatic buffer registration
-	UBLK_F_USER_RECOVERY         = 1 << 5  // User-space recovery support
-	UBLK_F_USER_RECOVERY_REISSUE = 1 << 6  // Reissue in-flight IOs on recovery
-	UBLK_F_USER_RECOVERY_FAIL_IO = 1 << 7  // Fail IOs during recovery
-	UBLK_F_USER_COPY             = 1 << 8  // User-space data copying
-	UBLK_F_ZONED                 = 1 << 9  // Zoned block device support
-	UBLK_F_CMD_IOCTL_ENCODE      = 1 << 10 // Encode ioctl in uring_cmd
+	UBLK_F_SUPPORT_ZERO_COPY      = 1 << 0  // Enable zero-copy support
+	UBLK_F_URING_CMD_COMP_IN_TASK = 1 << 1  // Complete uring_cmd in task context
+	UBLK_F_NEED_GET_DATA          = 1 << 2  // Deferred write data fetching
+	UBLK_F_USER_RECOVERY          = 1 << 3  // User-space recovery support
+	UBLK_F_USER_RECOVERY_REISSUE  = 1 << 4  // Reissue in-flight IOs on recovery
+	UBLK_F_UNPRIVILEGED_DEV       = 1 << 5  // Allow unprivileged device control
+	UBLK_F_CMD_IOCTL_ENCODE       = 1 << 6  // Encode ioctl in uring_cmd
+	UBLK_F_USER_COPY              = 1 << 7  // User-space data copying
+	UBLK_F_ZONED                  = 1 << 8  // Zoned block device support
+	UBLK_F_USER_RECOVERY_FAIL_IO  = 1 << 9  // Fail IOs during recovery
+	UBLK_F_UPDATE_SIZE            = 1 << 10 // Update device size
+	UBLK_F_AUTO_BUF_REG           = 1 << 11 // Automatic buffer registration
+	UBLK_F_QUIESCE                = 1 << 12 // Quiesce for recovery
+	UBLK_F_PER_IO_DAEMON          = 1 << 13 // Per-IO daemon support
 )
 
 // IO descriptor flags (in UblksrvIODesc.OpFlags).
@@ -76,23 +70,8 @@ type UblkParams struct {
 	}
 }
 
-// UblkDevInfo represents device information.
-type UblkDevInfo struct {
-	UblksrvCtrlDevInfo
-}
-
-// UblksrvCtrlDevInfo is the control device info structure.
-type UblksrvCtrlDevInfo struct {
-	NrHWQueues    uint16
-	QueueDepth    uint16
-	State         uint16
-	Pad           uint16
-	MaxIOBufBytes uint32
-	DevID         uint32
-	Flags         uint32
-	Reserved0     [32]uint8
-	Reserved1     [32]uint64
-}
+// UblkDevInfo represents device information (alias for UblksrvCtrlDevInfo).
+type UblkDevInfo = UblksrvCtrlDevInfo
 
 // UblksrvIODesc represents an IO descriptor.
 type UblksrvIODesc struct {

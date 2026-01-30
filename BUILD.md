@@ -4,6 +4,7 @@
 
 - Go 1.25 or later
 - Linux kernel 6.0+ with ublk driver enabled
+- **Root privileges (CAP_SYS_ADMIN)** for creating ublk devices
 
 ## Building
 

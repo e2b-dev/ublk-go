@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"syscall"
 	"unsafe"
 )
 
@@ -40,7 +39,7 @@ type Device struct {
 	writeAt func([]byte, int64) (int, error)
 
 	// Feature flags
-	flags uint32
+	flags uint64
 
 	// Statistics
 	stats Stats
@@ -152,7 +151,7 @@ func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error
 	return d, nil
 }
 
-// Add registers the device with the kernel (UBLK_CMD_ADD_DEV).
+// Add registers the device with the kernel (UBLK_U_CMD_ADD_DEV).
 // It opens the character device (/dev/ublkc*) for communication.
 func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 	d.mu.Lock()
@@ -162,14 +161,24 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		return ErrDeviceAlreadyStarted
 	}
 
+	// Prepare device info
 	info := UblksrvCtrlDevInfo{
 		NrHWQueues:    nrHWQueues,
 		QueueDepth:    queueDepth,
 		MaxIOBufBytes: 512 * 1024, // 512KB default
-		Flags:         d.flags,    // Apply configured feature flags
+		Flags:         d.flags,
 	}
 
-	if err := d.ioctl(UBLK_CMD_ADD_DEV, uintptr(unsafe.Pointer(&info))); err != nil {
+	// Wrap in control command structure
+	cmd := UblksrvCtrlCmd{
+		DevID:   ^uint32(0), // -1 means allocate new device ID
+		QueueID: ^uint16(0), // -1 for non-queue commands
+		Addr:    uint64(uintptr(unsafe.Pointer(&info))),
+		Len:     uint16(SizeOfCtrlDevInfo()),
+	}
+
+	// Use ioctl-encoded command (required when CONFIG_BLKDEV_UBLK_LEGACY_OPCODES is not set)
+	if err := d.ctrlCommand(uint32(UBLK_U_CMD_ADD_DEV), &cmd); err != nil {
 		return fmt.Errorf("failed to add device: %w", err)
 	}
 
@@ -180,7 +189,7 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 }
 
 // Flags returns the configured device feature flags.
-func (d *Device) Flags() uint32 {
+func (d *Device) Flags() uint64 {
 	return d.flags
 }
 
@@ -209,7 +218,7 @@ func (d *Device) openCharDevice() error {
 	return nil
 }
 
-// SetParams configures the device parameters (UBLK_CMD_SET_PARAMS).
+// SetParams configures the device parameters (UBLK_U_CMD_SET_PARAMS).
 func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -227,15 +236,22 @@ func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32) error {
 	params.IO.QueueDepth = d.info.QueueDepth
 	params.IO.NrHWQueues = d.info.NrHWQueues
 
-	if err := d.ioctl(UBLK_CMD_SET_PARAMS, uintptr(unsafe.Pointer(&params))); err != nil {
-		return fmt.Errorf("failed to set params: %w", err)
+	cmd := UblksrvCtrlCmd{
+		DevID:   uint32(d.devID),
+		QueueID: ^uint16(0), // -1 for non-queue commands
+		Addr:    uint64(uintptr(unsafe.Pointer(&params))),
+		Len:     uint16(unsafe.Sizeof(params)),
+	}
+
+	if err := d.ctrlCommand(uint32(UBLK_U_CMD_SET_PARAMS), &cmd); err != nil {
+		return fmt.Errorf("failed to set params: %w (requires CAP_SYS_ADMIN)", err)
 	}
 
 	d.params = params
 	return nil
 }
 
-// Start activates the device (UBLK_CMD_START_DEV) and starts IO workers.
+// Start activates the device (UBLK_U_CMD_START_DEV) and starts IO workers.
 func (d *Device) Start() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -247,7 +263,12 @@ func (d *Device) Start() error {
 		return ErrCharDevNotOpen
 	}
 
-	if err := d.ioctl(UBLK_CMD_START_DEV, 0); err != nil {
+	cmd := UblksrvCtrlCmd{
+		DevID:   uint32(d.devID),
+		QueueID: ^uint16(0), // -1 for non-queue commands
+	}
+
+	if err := d.ctrlCommand(uint32(UBLK_U_CMD_START_DEV), &cmd); err != nil {
 		return fmt.Errorf("failed to start device: %w", err)
 	}
 
@@ -280,10 +301,13 @@ func (d *Device) stopLocked() error {
 	}
 
 	// 1. Tell kernel to stop sending requests
-	// This cancels pending IOs and unblocks workers waiting on ring
+	cmd := UblksrvCtrlCmd{
+		DevID:   uint32(d.devID),
+		QueueID: ^uint16(0), // -1 for non-queue commands
+	}
 	var stopErr error
-	if err := d.ioctl(UBLK_CMD_STOP_DEV, 0); err != nil {
-		stopErr = fmt.Errorf("UBLK_CMD_STOP_DEV failed: %w", err)
+	if err := d.ctrlCommand(uint32(UBLK_U_CMD_STOP_DEV), &cmd); err != nil {
+		stopErr = fmt.Errorf("UBLK_U_CMD_STOP_DEV failed: %w", err)
 	}
 
 	// 2. Signal workers to stop (only once)
@@ -304,7 +328,7 @@ func (d *Device) stopLocked() error {
 	return stopErr
 }
 
-// Delete removes the device (UBLK_CMD_DEL_DEV) and closes file descriptors.
+// Delete removes the device (UBLK_U_CMD_DEL_DEV) and closes file descriptors.
 func (d *Device) Delete() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -319,7 +343,11 @@ func (d *Device) Delete() error {
 		d.charDevFD = nil
 	}
 
-	if err := d.ioctl(UBLK_CMD_DEL_DEV, 0); err != nil {
+	cmd := UblksrvCtrlCmd{
+		DevID:   uint32(d.devID),
+		QueueID: ^uint16(0), // -1 for non-queue commands
+	}
+	if err := d.ctrlCommand(uint32(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
 		return fmt.Errorf("failed to delete device: %w", err)
 	}
 
@@ -341,13 +369,10 @@ func (d *Device) DeviceID() int {
 	return d.devID
 }
 
-func (d *Device) ioctl(cmd uintptr, arg uintptr) error {
+// ctrlCommand executes a control command via io_uring.
+func (d *Device) ctrlCommand(cmdOp uint32, cmd *UblksrvCtrlCmd) error {
 	if d.controlFD == nil {
 		return errors.New("control device closed")
 	}
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, d.controlFD.Fd(), cmd, arg)
-	if errno != 0 {
-		return errno
-	}
-	return nil
+	return ctrlCmd(d.controlFD, cmdOp, cmd)
 }
