@@ -21,7 +21,7 @@ func BenchmarkGetSetIODesc(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		tag := uint16(i % 128)
 		worker.setIODesc(tag, desc)
 		_ = worker.getIODesc(tag)
@@ -45,7 +45,7 @@ func BenchmarkBufferManagerGetIODescBuffer(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = bm.GetIODescBuffer(desc)
 	}
 }
@@ -62,7 +62,7 @@ func BenchmarkBufferManagerGetRequestData(b *testing.B) {
 	bm := NewBufferManager(mmapAddr, queueDepth)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		tag := uint16(i % int(queueDepth))
 		_, _ = bm.GetRequestData(tag)
 	}
@@ -78,7 +78,7 @@ func BenchmarkParseRequest(b *testing.B) {
 	desc := UblksrvIODesc{}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseRequest(desc, buf)
 	}
 }
@@ -87,14 +87,14 @@ func BenchmarkUblkIOCommandToBytes(b *testing.B) {
 	cmd := NewFetchReqCommand(0, 0, 0)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = cmd.ToBytes()
 	}
 }
 
 func BenchmarkRoundUpPow2(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = roundUpPow2(uint(i % 4096))
 	}
 }
@@ -104,7 +104,7 @@ func BenchmarkTestBackendReadWrite(b *testing.B) {
 	buf := make([]byte, 4096)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		offset := int64((i * 4096) % (1024 * 1024))
 		_, _ = backend.WriteAt(buf, offset)
 		_, _ = backend.ReadAt(buf, offset)

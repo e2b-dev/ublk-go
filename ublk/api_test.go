@@ -22,10 +22,7 @@ func (b *TestBackend) ReadAt(p []byte, off int64) (n int, err error) {
 	if off >= b.size {
 		return 0, errors.New("offset out of range")
 	}
-	end := off + int64(len(p))
-	if end > b.size {
-		end = b.size
-	}
+	end := min(off+int64(len(p)), b.size)
 	n = copy(p, b.data[off:end])
 	if n < len(p) {
 		return n, errors.New("short read")
@@ -118,7 +115,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 // TestBackendInterface tests that TestBackend implements Backend
-func TestBackendInterface(t *testing.T) {
+func TestBackendInterface(_ *testing.T) {
 	var _ Backend = (*TestBackend)(nil)
 	var _ Backend = (*ReaderAtWriterAt)(nil)
 }
@@ -306,7 +303,7 @@ func TestBackendOperations(t *testing.T) {
 		t.Errorf("Expected to read %d bytes, got %d", len(data), n)
 	}
 	if string(buf) != string(data) {
-		t.Errorf("Read data doesn't match written data")
+		t.Error("Read data doesn't match written data")
 	}
 
 	// Test read beyond size
@@ -455,6 +452,7 @@ func TestExtendedBackendInterfaces(t *testing.T) {
 // ExtendedTestBackend implements all optional interfaces
 type ExtendedTestBackend struct {
 	TestBackend
+
 	flushed     bool
 	discarded   bool
 	zeroWritten bool
@@ -465,12 +463,12 @@ func (b *ExtendedTestBackend) Flush() error {
 	return nil
 }
 
-func (b *ExtendedTestBackend) Discard(offset, length int64) error {
+func (b *ExtendedTestBackend) Discard(_, _ int64) error {
 	b.discarded = true
 	return nil
 }
 
-func (b *ExtendedTestBackend) WriteZeroes(offset, length int64) error {
+func (b *ExtendedTestBackend) WriteZeroes(_, _ int64) error {
 	b.zeroWritten = true
 	return nil
 }

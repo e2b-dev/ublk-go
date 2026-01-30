@@ -65,7 +65,7 @@ func (w *ioWorker) run() {
 
 // submitAllFetchRequests submits FETCH_REQ for all tags in the queue.
 func (w *ioWorker) submitAllFetchRequests() error {
-	for tag := uint16(0); tag < w.queueDepth; tag++ {
+	for tag := range w.queueDepth {
 		if err := w.submitFetchReq(tag); err != nil {
 			return fmt.Errorf("tag %d: %w", tag, err)
 		}
@@ -162,7 +162,7 @@ func (w *ioWorker) handleRequest(tag uint16) {
 	}
 
 	// Calculate offset and length
-	blockSize := uint32(w.device.params.Basic.LogicalBSize)
+	blockSize := w.device.params.Basic.LogicalBSize
 	if blockSize == 0 {
 		blockSize = 512 // fallback
 	}

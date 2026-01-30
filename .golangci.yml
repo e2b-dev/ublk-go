@@ -1,0 +1,120 @@
+version: "2"
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/ublk-go/ublk)
+
+linters:
+  default: all
+  disable:
+    # These are too noisy for this low-level systems code
+    - cyclop
+    - depguard
+    - dupl
+    - errcheck        # Many Close() calls legitimately ignore errors
+    - exhaustive
+    - exhaustruct
+    - funcorder       # Too opinionated about function ordering
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocyclo
+    - godot
+    - godox
+    - gomoddirectives
+    - gomodguard
+    - ireturn
+    - lll
+    - maintidx
+    - mnd
+    - nestif
+    - nilnil
+    - nlreturn        # Too strict about blank lines
+    - noinlineerr     # Inline error handling is idiomatic Go
+    - nonamedreturns
+    - paralleltest    # Not all tests can run in parallel
+    - prealloc
+    - tagliatelle
+    - testpackage
+    - unparam
+    - varnamelen
+    - wrapcheck
+
+    # Security checks that don't apply to this kernel-interface code
+    - gosec
+
+    # TODO: enable these later
+    - err113
+    - forcetypeassert
+    - godoclint
+
+    # Deprecated
+    - wsl
+    - wsl_v5
+
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: "^new$"
+          msg: "Use &Type{} instead of new()."
+      analyze-types: true
+
+    gocritic:
+      disabled-checks:
+        - appendAssign
+
+    revive:
+      enable-all-rules: true
+      rules:
+        - { disabled: true, name: add-constant }
+        - { disabled: true, name: argument-limit }
+        - { disabled: true, name: bare-return }
+        - { disabled: true, name: cognitive-complexity }
+        - { disabled: true, name: comment-spacings }
+        - { disabled: true, name: confusing-naming }
+        - { disabled: true, name: cyclomatic }
+        - { disabled: true, name: deep-exit }
+        - { disabled: true, name: exported }
+        - { disabled: true, name: flag-parameter }
+        - { disabled: true, name: function-length }
+        - { disabled: true, name: function-result-limit }
+        - { disabled: true, name: get-return }
+        - { disabled: true, name: import-alias-naming }
+        - { disabled: true, name: import-shadowing }
+        - { disabled: true, name: line-length-limit }
+        - { disabled: true, name: max-control-nesting }
+        - { disabled: true, name: max-public-structs }
+        - { disabled: true, name: nested-structs }
+        - { disabled: true, name: package-comments }
+        - { disabled: true, name: unchecked-type-assertion }
+        - { disabled: true, name: unexported-naming }
+        - { disabled: true, name: unhandled-error }
+        - { disabled: true, name: unused-receiver }
+        - { disabled: true, name: var-declaration }
+        - { disabled: true, name: var-naming }
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # Package comment style
+        - -ST1020  # Function doc should start with function name
+        - -ST1021  # Type doc should start with type name
+        - -ST1003  # Identifier naming
+        - -QF1008  # Omit embedded fields
+
+run:
+  go: "1.25"
+  allow-parallel-runners: true
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10

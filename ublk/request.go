@@ -31,7 +31,7 @@ type UblkSegment struct {
 }
 
 // ParseRequest parses a ublk request from the IO descriptor data.
-func ParseRequest(desc UblksrvIODesc, data []byte) (*UblkRequest, error) {
+func ParseRequest(_ UblksrvIODesc, data []byte) (*UblkRequest, error) {
 	if len(data) < int(unsafe.Sizeof(UblkRequest{})) {
 		return nil, ErrInvalidRequest
 	}

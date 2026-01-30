@@ -37,10 +37,7 @@ func (b *MemoryBackend) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, io.EOF
 	}
 
-	end := off + int64(len(p))
-	if end > b.size {
-		end = b.size
-	}
+	end := min(off+int64(len(p)), b.size)
 
 	n = copy(p, b.data[off:end])
 	if n < len(p) {
@@ -59,10 +56,7 @@ func (b *MemoryBackend) WriteAt(p []byte, off int64) (n int, err error) {
 		return 0, fmt.Errorf("offset %d beyond size %d", off, b.size)
 	}
 
-	end := off + int64(len(p))
-	if end > b.size {
-		end = b.size
-	}
+	end := min(off+int64(len(p)), b.size)
 
 	n = copy(b.data[off:end], p)
 	return n, nil
@@ -83,15 +77,10 @@ func (b *MemoryBackend) WriteZeroes(off, length int64) error {
 		return fmt.Errorf("offset %d beyond size %d", off, b.size)
 	}
 
-	end := off + length
-	if end > b.size {
-		end = b.size
-	}
+	end := min(off+length, b.size)
 
 	// Zero the region
-	for i := off; i < end; i++ {
-		b.data[i] = 0
-	}
+	clear(b.data[off:end])
 
 	return nil
 }

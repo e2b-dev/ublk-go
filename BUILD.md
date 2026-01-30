@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Go 1.21 or later
+- Go 1.25 or later
 - Linux kernel 6.0+ with ublk driver enabled
 
 ## Building
@@ -69,6 +69,26 @@ go test ./ublk -run 'Test.*Size|Test.*Constants'
 ```bash
 go test ./ublk -bench=. -benchmem
 ```
+
+## Linting
+
+The project uses [golangci-lint](https://golangci-lint.run/) for code quality:
+
+```bash
+# Run all linters
+golangci-lint run ./...
+
+# Auto-fix formatting issues
+golangci-lint fmt ./...
+```
+
+The configuration (`.golangci.yml`) enables:
+- **gofumpt**: Stricter formatting than gofmt
+- **gci**: Import ordering (stdlib, external, local)
+- **revive**: Comprehensive linting
+- **staticcheck**: Advanced static analysis
+- **errorlint**: Error wrapping checks
+- **gocritic**: Opinionated code review suggestions
 
 ### Kernel-backed tests (requires root)
 

@@ -24,7 +24,7 @@ func TestLogf(t *testing.T) {
 	}
 }
 
-func TestLogfNilLogger(t *testing.T) {
+func TestLogfNilLogger(_ *testing.T) {
 	// Save original logger
 	origLogger := DefaultLogger
 	defer func() { DefaultLogger = origLogger }()

@@ -47,6 +47,7 @@ type Device struct {
 
 // NewDevice creates a new ublk device instance.
 // It opens the control device but does not create the ublk device yet.
+//
 // Deprecated: Use NewDeviceWithBackend for full functionality including Flush/Discard.
 func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int64) (int, error)) (*Device, error) {
 	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
@@ -164,7 +165,7 @@ func (d *Device) Start() error {
 
 func (d *Device) startWorkers() {
 	d.workers = make([]*ioWorker, d.info.NrHWQueues)
-	for i := uint16(0); i < d.info.NrHWQueues; i++ {
+	for i := range d.info.NrHWQueues {
 		worker := newIOWorker(d, i, d.info.QueueDepth)
 		d.workers[i] = worker
 		d.wg.Add(1)

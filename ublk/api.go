@@ -47,6 +47,7 @@
 package ublk
 
 import (
+	"errors"
 	"fmt"
 	"io"
 )
@@ -114,7 +115,7 @@ func (c *Config) validate() error {
 
 	// Validate Size is not zero
 	if c.Size == 0 {
-		return fmt.Errorf("Size must be greater than 0")
+		return errors.New("Size must be greater than 0")
 	}
 
 	// Validate queue depth is power of 2

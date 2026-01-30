@@ -73,7 +73,7 @@ func TestIOWorkerGetIODescNilMmap(t *testing.T) {
 	}
 }
 
-func TestIOWorkerSetIODescNilMmap(t *testing.T) {
+func TestIOWorkerSetIODescNilMmap(_ *testing.T) {
 	worker := &ioWorker{
 		queueDepth: 4,
 		mmapAddr:   nil,
@@ -98,7 +98,7 @@ func TestIOWorkerGetIODescOutOfBounds(t *testing.T) {
 	}
 }
 
-func TestIOWorkerSetIODescOutOfBounds(t *testing.T) {
+func TestIOWorkerSetIODescOutOfBounds(_ *testing.T) {
 	worker := &ioWorker{
 		queueDepth: 2,
 	}
@@ -150,7 +150,7 @@ func TestIOWorkerMultipleDescriptors(t *testing.T) {
 	worker.mmapAddr = make([]byte, descSize*4)
 
 	// Set all 4 descriptors
-	for tag := uint16(0); tag < 4; tag++ {
+	for tag := range uint16(4) {
 		desc := UblksrvIODesc{
 			Addr:   uint64(tag * 0x1000),
 			Length: 512 * uint32(tag+1),
@@ -160,7 +160,7 @@ func TestIOWorkerMultipleDescriptors(t *testing.T) {
 	}
 
 	// Read them back and verify
-	for tag := uint16(0); tag < 4; tag++ {
+	for tag := range uint16(4) {
 		got := worker.getIODesc(tag)
 		if got.Addr != uint64(tag*0x1000) {
 			t.Errorf("Tag %d: expected Addr 0x%x, got 0x%x", tag, tag*0x1000, got.Addr)

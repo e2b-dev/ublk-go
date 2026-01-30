@@ -67,7 +67,7 @@ func NewRing(entries uint, flags uint) (*Ring, error) {
 	// Call io_uring_setup syscall
 	fd, _, errno := syscall.Syscall(unix.SYS_IO_URING_SETUP, uintptr(entries), uintptr(unsafe.Pointer(&params)), 0)
 	if errno != 0 {
-		return nil, fmt.Errorf("io_uring_setup failed: %v", errno)
+		return nil, fmt.Errorf("io_uring_setup failed: %w", errno)
 	}
 
 	ring := &Ring{
@@ -194,10 +194,9 @@ func (r *Ring) Submit() (int, error) {
 
 	// Fill the SQ ring array
 	mask := *r.sq.ringMask
-	for i := uint32(0); i < count; i++ {
+	for i := range count {
 		idx := (head + i) & mask
-		offset := uintptr(idx) * 4
-		*(*uint32)(unsafe.Pointer(uintptr(unsafe.Pointer(r.sq.array)) + offset)) = idx
+		*(*uint32)(unsafe.Add(unsafe.Pointer(r.sq.array), idx*4)) = idx
 	}
 
 	// Update tail with a store barrier to ensure SQE writes are visible
@@ -216,7 +215,7 @@ func (r *Ring) Submit() (int, error) {
 	)
 
 	if errno != 0 {
-		return 0, fmt.Errorf("io_uring_enter failed: %v", errno)
+		return 0, fmt.Errorf("io_uring_enter failed: %w", errno)
 	}
 
 	return int(ret), nil
@@ -246,13 +245,13 @@ func (r *Ring) WaitCQE() (*UringCQE, error) {
 		)
 
 		if errno != 0 && errno != unix.EINTR {
-			return nil, fmt.Errorf("wait failed: %v", errno)
+			return nil, fmt.Errorf("wait failed: %w", errno)
 		}
 	}
 }
 
 // SeenCQE advances the completion queue head
-func (r *Ring) SeenCQE(cqe *UringCQE) {
+func (r *Ring) SeenCQE(_ *UringCQE) {
 	atomic.AddUint32(r.cq.head, 1)
 }
 
