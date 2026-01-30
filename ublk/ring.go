@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Ring represents an io_uring instance
+// Ring represents an io_uring instance.
 // It manages the submission and completion queues and provides
 // methods to submit operations and wait for completions.
 type Ring struct {
@@ -20,11 +20,47 @@ type Ring struct {
 	cq     *completionQueue
 	sqes   []UringSQE
 	params UringParams
+	flags  uint
 
 	// Mmap tracking for cleanup
 	mmapSQ   []byte
 	mmapCQ   []byte
 	mmapSQEs []byte
+}
+
+// RingOption configures ring creation.
+type RingOption func(*ringConfig)
+
+type ringConfig struct {
+	singleIssuer bool
+	deferTaskrun bool
+	coopTaskrun  bool
+}
+
+// WithSingleIssuer enables IORING_SETUP_SINGLE_ISSUER (kernel 6.0+).
+// This should be used when only one thread submits to the ring.
+func WithSingleIssuer() RingOption {
+	return func(c *ringConfig) {
+		c.singleIssuer = true
+	}
+}
+
+// WithDeferTaskrun enables IORING_SETUP_DEFER_TASKRUN (kernel 6.1+).
+// This defers task work to reduce context switches.
+// Must be combined with SINGLE_ISSUER.
+func WithDeferTaskrun() RingOption {
+	return func(c *ringConfig) {
+		c.deferTaskrun = true
+		c.singleIssuer = true // Required
+	}
+}
+
+// WithCoopTaskrun enables IORING_SETUP_COOP_TASKRUN (kernel 6.0+).
+// This enables cooperative task running.
+func WithCoopTaskrun() RingOption {
+	return func(c *ringConfig) {
+		c.coopTaskrun = true
+	}
 }
 
 // submissionQueue represents the mapped submission queue.
@@ -52,9 +88,31 @@ type completionQueue struct {
 
 // NewRing creates a new io_uring instance.
 func NewRing(entries uint, flags uint) (*Ring, error) {
+	return NewRingWithOptions(entries, flags)
+}
+
+// NewRingWithOptions creates a new io_uring instance with optional performance settings.
+func NewRingWithOptions(entries uint, flags uint, opts ...RingOption) (*Ring, error) {
 	entries = roundUpPow2(entries)
 	if entries < 1 || entries > 4096 {
 		return nil, errors.New("entries must be between 1 and 4096")
+	}
+
+	// Apply options
+	cfg := &ringConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Add performance flags based on options
+	if cfg.singleIssuer {
+		flags |= IORING_SETUP_SINGLE_ISSUER
+	}
+	if cfg.deferTaskrun {
+		flags |= IORING_SETUP_DEFER_TASKRUN
+	}
+	if cfg.coopTaskrun {
+		flags |= IORING_SETUP_COOP_TASKRUN
 	}
 
 	// Create params struct
@@ -73,6 +131,7 @@ func NewRing(entries uint, flags uint) (*Ring, error) {
 	ring := &Ring{
 		fd:     int(fd),
 		params: params,
+		flags:  flags,
 	}
 
 	if err := ring.mmapRings(entries); err != nil {

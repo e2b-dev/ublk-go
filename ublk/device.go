@@ -39,10 +39,49 @@ type Device struct {
 	readAt  func([]byte, int64) (int, error)
 	writeAt func([]byte, int64) (int, error)
 
+	// Feature flags
+	flags uint32
+
 	// Worker management
 	workers []*ioWorker
 	wg      sync.WaitGroup
 	stopCh  chan struct{}
+}
+
+// DeviceOption configures device creation.
+type DeviceOption func(*Device)
+
+// WithZeroCopy enables zero-copy support (requires CAP_SYS_ADMIN).
+// This enables UBLK_F_SUPPORT_ZERO_COPY which allows the ublk server
+// to register IO buffers and avoid data copying.
+func WithZeroCopy() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_SUPPORT_ZERO_COPY
+	}
+}
+
+// WithAutoBufReg enables automatic buffer registration (kernel 6.x+).
+// This simplifies zero-copy by automatically registering and unregistering
+// buffers, eliminating manual REGISTER_IO_BUF/UNREGISTER_IO_BUF commands.
+func WithAutoBufReg() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_AUTO_BUF_REG | UBLK_F_SUPPORT_ZERO_COPY
+	}
+}
+
+// WithUserRecovery enables user-space recovery on ublk server crash.
+// The device survives server restarts without losing the block device.
+func WithUserRecovery() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_USER_RECOVERY
+	}
+}
+
+// WithUnprivileged enables unprivileged device control (container-aware).
+func WithUnprivileged() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_UNPRIVILEGED_DEV
+	}
 }
 
 // NewDevice creates a new ublk device instance.
@@ -65,19 +104,28 @@ func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int
 
 // NewDeviceWithBackend creates a new ublk device instance with a Backend.
 // This allows support for extended operations like Flush and Discard.
-func NewDeviceWithBackend(backend Backend) (*Device, error) {
+// Optional DeviceOption arguments can be passed to configure features like
+// zero-copy, user recovery, and unprivileged mode.
+func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error) {
 	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open control device: %w", err)
 	}
 
-	return &Device{
+	d := &Device{
 		controlFD: controlFD,
 		backend:   backend,
 		readAt:    backend.ReadAt,
 		writeAt:   backend.WriteAt,
 		stopCh:    make(chan struct{}),
-	}, nil
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d, nil
 }
 
 // Add registers the device with the kernel (UBLK_CMD_ADD_DEV).
@@ -94,6 +142,7 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		NrHWQueues:    nrHWQueues,
 		QueueDepth:    queueDepth,
 		MaxIOBufBytes: 512 * 1024, // 512KB default
+		Flags:         d.flags,    // Apply configured feature flags
 	}
 
 	if err := d.ioctl(UBLK_CMD_ADD_DEV, uintptr(unsafe.Pointer(&info))); err != nil {
@@ -104,6 +153,21 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 	d.devID = int(info.DevID)
 
 	return d.openCharDevice()
+}
+
+// Flags returns the configured device feature flags.
+func (d *Device) Flags() uint32 {
+	return d.flags
+}
+
+// HasZeroCopy returns true if zero-copy support is enabled.
+func (d *Device) HasZeroCopy() bool {
+	return d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0
+}
+
+// HasAutoBufReg returns true if automatic buffer registration is enabled.
+func (d *Device) HasAutoBufReg() bool {
+	return d.flags&UBLK_F_AUTO_BUF_REG != 0
 }
 
 func (d *Device) openCharDevice() error {

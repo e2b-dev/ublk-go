@@ -61,3 +61,73 @@ func TestNewRingValidEntries(t *testing.T) {
 		t.Error("Ring fd should be non-negative")
 	}
 }
+
+// TestNewRingWithOptions tests ring creation with performance options.
+func TestNewRingWithOptions(t *testing.T) {
+	// Test that options apply flags correctly
+	t.Run("SingleIssuer", func(t *testing.T) {
+		cfg := &ringConfig{}
+		WithSingleIssuer()(cfg)
+		if !cfg.singleIssuer {
+			t.Error("WithSingleIssuer should set singleIssuer")
+		}
+	})
+
+	t.Run("DeferTaskrun", func(t *testing.T) {
+		cfg := &ringConfig{}
+		WithDeferTaskrun()(cfg)
+		if !cfg.deferTaskrun {
+			t.Error("WithDeferTaskrun should set deferTaskrun")
+		}
+		if !cfg.singleIssuer {
+			t.Error("WithDeferTaskrun should also set singleIssuer (required)")
+		}
+	})
+
+	t.Run("CoopTaskrun", func(t *testing.T) {
+		cfg := &ringConfig{}
+		WithCoopTaskrun()(cfg)
+		if !cfg.coopTaskrun {
+			t.Error("WithCoopTaskrun should set coopTaskrun")
+		}
+	})
+
+	// Test actual ring creation with options (may fail without kernel support)
+	t.Run("CreateWithOptions", func(t *testing.T) {
+		ring, err := NewRingWithOptions(64, 0, WithSingleIssuer())
+		if err != nil {
+			t.Logf("NewRingWithOptions error (expected without kernel 6.0+): %v", err)
+			return
+		}
+		defer ring.Close()
+
+		if ring.flags&IORING_SETUP_SINGLE_ISSUER == 0 {
+			t.Error("Ring should have SINGLE_ISSUER flag set")
+		}
+	})
+}
+
+// TestRingSetupFlags tests that io_uring setup flags have correct values.
+func TestRingSetupFlags(t *testing.T) {
+	// Verify the flag values match kernel ABI
+	tests := []struct {
+		name  string
+		value uint
+		want  uint
+	}{
+		{"IORING_SETUP_IOPOLL", IORING_SETUP_IOPOLL, 1 << 0},
+		{"IORING_SETUP_SQPOLL", IORING_SETUP_SQPOLL, 1 << 1},
+		{"IORING_SETUP_SQ_AFF", IORING_SETUP_SQ_AFF, 1 << 2},
+		{"IORING_SETUP_COOP_TASKRUN", IORING_SETUP_COOP_TASKRUN, 1 << 8},
+		{"IORING_SETUP_SINGLE_ISSUER", IORING_SETUP_SINGLE_ISSUER, 1 << 12},
+		{"IORING_SETUP_DEFER_TASKRUN", IORING_SETUP_DEFER_TASKRUN, 1 << 13},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.value != tt.want {
+				t.Errorf("%s = %d, want %d", tt.name, tt.value, tt.want)
+			}
+		})
+	}
+}

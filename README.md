@@ -8,8 +8,8 @@ This library allows you to create block devices in userspace by implementing sim
 
 ## Requirements
 
-- Linux kernel 6.0+ with ublk driver enabled
-- Go 1.21+
+- Linux kernel 6.0+ with ublk driver enabled (6.1+ for best performance)
+- Go 1.25+
 - Root privileges (for creating block devices)
 
 ## Installation
@@ -83,11 +83,38 @@ type Backend interface {
 
 ```go
 type Config struct {
-    BlockSize   uint64  // Logical block size (typically 512 or 4096)
-    Size        uint64  // Total device size in bytes
-    MaxSectors  uint32  // Maximum sectors per request
-    NrHWQueues  uint16  // Number of hardware queues
-    QueueDepth  uint16  // Depth of each queue
+    BlockSize    uint64  // Logical block size (typically 512 or 4096)
+    Size         uint64  // Total device size in bytes
+    MaxSectors   uint32  // Maximum sectors per request
+    NrHWQueues   uint16  // Number of hardware queues
+    QueueDepth   uint16  // Depth of each queue
+    
+    // Advanced features (kernel 6.x+)
+    ZeroCopy     bool    // Enable zero-copy mode
+    AutoBufReg   bool    // Automatic buffer registration
+    UserRecovery bool    // Survive server restarts
+    Unprivileged bool    // Container-aware mode
+}
+```
+
+### Optional Backend Interfaces
+
+For advanced operations, implement these optional interfaces:
+
+```go
+// Flusher for cache flush support
+type Flusher interface {
+    Flush() error
+}
+
+// Discarder for TRIM/discard support
+type Discarder interface {
+    Discard(offset, length int64) error
+}
+
+// WriteZeroer for efficient zero-filling
+type WriteZeroer interface {
+    WriteZeroes(offset, length int64) error
 }
 ```
 
@@ -109,14 +136,29 @@ See `example/main.go` for a complete example with an in-memory backend.
 - ✅ Control plane (device creation, configuration) - **Complete**
 - ✅ High-level API - **Complete**
 - ✅ IO plane (io_uring passthrough) - **Pure Go implementation**
+- ✅ Performance optimizations (SINGLE_ISSUER, DEFER_TASKRUN) - **Kernel 6.1+**
+- ✅ Zero-copy support - **Available (requires CAP_SYS_ADMIN)**
 
 The library is **100% pure Go** with no CGO or C dependencies. It provides:
 
 - Full control plane operations (add, start, stop, delete devices)
 - io_uring-based I/O handling with passthrough commands
+- Optimized io_uring setup with modern kernel flags
 - Buffer management for efficient data transfer
 - Support for multiple queues and concurrent I/O
 - Zero-allocation hot paths
+- Extended backend support (Flush, Discard, WriteZeroes)
+
+### Performance Features
+
+The library automatically uses modern io_uring features when available:
+
+| Feature | Kernel | Benefit |
+|---------|--------|---------|
+| `IORING_SETUP_SINGLE_ISSUER` | 6.0+ | Optimizes for single-thread submission |
+| `IORING_SETUP_DEFER_TASKRUN` | 6.1+ | Reduces context switches |
+| `UBLK_F_SUPPORT_ZERO_COPY` | 6.x | Eliminates data copies |
+| `UBLK_F_AUTO_BUF_REG` | 6.x | Automatic buffer management |
 
 See `BUILD.md` for build and test instructions.
 

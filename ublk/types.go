@@ -28,18 +28,33 @@ const (
 	UBLK_CMD_GET_DEV_INFO2      = 0x4709
 )
 
+// IO commands for io_uring passthrough.
 const (
 	UBLK_IO_FETCH_REQ            = 0x4750
 	UBLK_IO_COMMIT_AND_FETCH_REQ = 0x4751
 	UBLK_IO_NEED_GET_DATA        = 0x4752
+	UBLK_IO_REGISTER_IO_BUF      = 0x4753 // Zero-copy: register buffer
+	UBLK_IO_UNREGISTER_IO_BUF    = 0x4754 // Zero-copy: unregister buffer
 )
 
+// Device feature flags (passed to UBLK_CMD_ADD_DEV).
 const (
-	UBLK_F_SUPPORT_ZERO_COPY = 1 << 0
-	UBLK_F_NEED_GET_DATA     = 1 << 1
-	UBLK_F_UNPRIVILEGED_DEV  = 1 << 2
-	UBLK_F_PER_IO_DAEMON     = 1 << 3
-	UBLK_F_AUTO_BUF_REG      = 1 << 4
+	UBLK_F_SUPPORT_ZERO_COPY     = 1 << 0  // Enable zero-copy support
+	UBLK_F_NEED_GET_DATA         = 1 << 1  // Deferred write data fetching
+	UBLK_F_UNPRIVILEGED_DEV      = 1 << 2  // Allow unprivileged device control
+	UBLK_F_PER_IO_DAEMON         = 1 << 3  // Per-IO daemon support
+	UBLK_F_AUTO_BUF_REG          = 1 << 4  // Automatic buffer registration
+	UBLK_F_USER_RECOVERY         = 1 << 5  // User-space recovery support
+	UBLK_F_USER_RECOVERY_REISSUE = 1 << 6  // Reissue in-flight IOs on recovery
+	UBLK_F_USER_RECOVERY_FAIL_IO = 1 << 7  // Fail IOs during recovery
+	UBLK_F_USER_COPY             = 1 << 8  // User-space data copying
+	UBLK_F_ZONED                 = 1 << 9  // Zoned block device support
+	UBLK_F_CMD_IOCTL_ENCODE      = 1 << 10 // Encode ioctl in uring_cmd
+)
+
+// IO descriptor flags (in UblksrvIODesc.OpFlags).
+const (
+	UBLK_IO_F_NEED_REG_BUF = 1 << 8 // Auto buffer registration failed, manual needed
 )
 
 // UblkParams represents device parameters.

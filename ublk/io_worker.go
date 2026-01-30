@@ -34,11 +34,22 @@ func newIOWorker(device *Device, qid uint16, queueDepth uint16) *ioWorker {
 func (w *ioWorker) run() {
 	defer w.device.wg.Done()
 
-	// Initialize io_uring for this queue
-	ring, err := NewRing(uint(w.queueDepth), 0)
+	// Initialize io_uring for this queue with optimized flags.
+	// Each queue has a single goroutine (single issuer), so we can enable
+	// SINGLE_ISSUER and DEFER_TASKRUN for reduced context switches.
+	ring, err := NewRingWithOptions(
+		uint(w.queueDepth),
+		0,
+		WithSingleIssuer(),
+		WithDeferTaskrun(),
+	)
 	if err != nil {
-		logf("Queue %d: failed to create io_uring: %v", w.qid, err)
-		return
+		// Fallback to basic ring if kernel doesn't support new flags
+		ring, err = NewRing(uint(w.queueDepth), 0)
+		if err != nil {
+			logf("Queue %d: failed to create io_uring: %v", w.qid, err)
+			return
+		}
 	}
 	w.ring = ring
 	defer ring.Close()

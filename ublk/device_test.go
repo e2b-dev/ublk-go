@@ -83,3 +83,83 @@ func TestErrInvalidRequest(t *testing.T) {
 		t.Errorf("Expected 'invalid request', got '%s'", ErrInvalidRequest.Error())
 	}
 }
+
+// TestDeviceOptions tests the device option functions.
+func TestDeviceOptions(t *testing.T) {
+	t.Run("WithZeroCopy", func(t *testing.T) {
+		d := &Device{}
+		WithZeroCopy()(d)
+		if d.flags&UBLK_F_SUPPORT_ZERO_COPY == 0 {
+			t.Error("WithZeroCopy should set UBLK_F_SUPPORT_ZERO_COPY")
+		}
+	})
+
+	t.Run("WithAutoBufReg", func(t *testing.T) {
+		d := &Device{}
+		WithAutoBufReg()(d)
+		if d.flags&UBLK_F_AUTO_BUF_REG == 0 {
+			t.Error("WithAutoBufReg should set UBLK_F_AUTO_BUF_REG")
+		}
+		if d.flags&UBLK_F_SUPPORT_ZERO_COPY == 0 {
+			t.Error("WithAutoBufReg should also set UBLK_F_SUPPORT_ZERO_COPY")
+		}
+	})
+
+	t.Run("WithUserRecovery", func(t *testing.T) {
+		d := &Device{}
+		WithUserRecovery()(d)
+		if d.flags&UBLK_F_USER_RECOVERY == 0 {
+			t.Error("WithUserRecovery should set UBLK_F_USER_RECOVERY")
+		}
+	})
+
+	t.Run("WithUnprivileged", func(t *testing.T) {
+		d := &Device{}
+		WithUnprivileged()(d)
+		if d.flags&UBLK_F_UNPRIVILEGED_DEV == 0 {
+			t.Error("WithUnprivileged should set UBLK_F_UNPRIVILEGED_DEV")
+		}
+	})
+}
+
+// TestDeviceFeatureFlags tests the device feature flag constants.
+func TestDeviceFeatureFlags(t *testing.T) {
+	tests := []struct {
+		name  string
+		value uint32
+		want  uint32
+	}{
+		{"UBLK_F_SUPPORT_ZERO_COPY", UBLK_F_SUPPORT_ZERO_COPY, 1 << 0},
+		{"UBLK_F_NEED_GET_DATA", UBLK_F_NEED_GET_DATA, 1 << 1},
+		{"UBLK_F_UNPRIVILEGED_DEV", UBLK_F_UNPRIVILEGED_DEV, 1 << 2},
+		{"UBLK_F_PER_IO_DAEMON", UBLK_F_PER_IO_DAEMON, 1 << 3},
+		{"UBLK_F_AUTO_BUF_REG", UBLK_F_AUTO_BUF_REG, 1 << 4},
+		{"UBLK_F_USER_RECOVERY", UBLK_F_USER_RECOVERY, 1 << 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.value != tt.want {
+				t.Errorf("%s = %d, want %d", tt.name, tt.value, tt.want)
+			}
+		})
+	}
+}
+
+// TestDeviceHelpers tests the device helper methods.
+func TestDeviceHelpers(t *testing.T) {
+	d := &Device{flags: UBLK_F_SUPPORT_ZERO_COPY | UBLK_F_AUTO_BUF_REG}
+
+	if !d.HasZeroCopy() {
+		t.Error("HasZeroCopy() should return true")
+	}
+
+	if !d.HasAutoBufReg() {
+		t.Error("HasAutoBufReg() should return true")
+	}
+
+	d2 := &Device{}
+	if d2.HasZeroCopy() {
+		t.Error("HasZeroCopy() should return false for default device")
+	}
+}

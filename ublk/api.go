@@ -68,6 +68,22 @@ type Config struct {
 
 	// QueueDepth is the depth of each queue (default: 128)
 	QueueDepth uint16
+
+	// ZeroCopy enables zero-copy mode (requires CAP_SYS_ADMIN, kernel 6.x+).
+	// When enabled, IO buffers are registered with io_uring to avoid data copying.
+	ZeroCopy bool
+
+	// AutoBufReg enables automatic buffer registration (implies ZeroCopy).
+	// This simplifies zero-copy by having the kernel automatically register
+	// and unregister buffers, eliminating manual buffer management.
+	AutoBufReg bool
+
+	// UserRecovery enables user-space recovery on ublk server crash.
+	// The block device survives server restarts without data loss.
+	UserRecovery bool
+
+	// Unprivileged enables unprivileged device control (container-aware).
+	Unprivileged bool
 }
 
 // DefaultConfig returns a default configuration.
@@ -166,8 +182,22 @@ func CreateDevice(backend Backend, config Config) (*Device, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Create device with backend
-	dev, err := NewDeviceWithBackend(backend)
+	// Build device options from config
+	var opts []DeviceOption
+	if config.AutoBufReg {
+		opts = append(opts, WithAutoBufReg())
+	} else if config.ZeroCopy {
+		opts = append(opts, WithZeroCopy())
+	}
+	if config.UserRecovery {
+		opts = append(opts, WithUserRecovery())
+	}
+	if config.Unprivileged {
+		opts = append(opts, WithUnprivileged())
+	}
+
+	// Create device with backend and options
+	dev, err := NewDeviceWithBackend(backend, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device: %w", err)
 	}
