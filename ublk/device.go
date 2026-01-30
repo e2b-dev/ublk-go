@@ -13,6 +13,11 @@ var (
 	ErrDeviceAlreadyStarted = errors.New("device already started")
 	ErrInvalidParameters    = errors.New("invalid parameters")
 	ErrCharDevNotOpen       = errors.New("char device not opened")
+	ErrInvalidRequest       = errors.New("invalid request")
+
+	// controlDevicePath is the path to the ublk control device.
+	// It is a variable to allow overriding in tests.
+	controlDevicePath = "/dev/ublk-control"
 )
 
 // Device represents a ublk block device.
@@ -112,7 +117,7 @@ func WithUserCopy() DeviceOption {
 //
 // Deprecated: Use NewDeviceWithBackend for full functionality including Flush/Discard.
 func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int64) (int, error)) (*Device, error) {
-	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
+	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open control device: %w", err)
 	}
@@ -130,7 +135,7 @@ func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int
 // Optional DeviceOption arguments can be passed to configure features like
 // zero-copy, user recovery, and unprivileged mode.
 func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error) {
-	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
+	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open control device: %w", err)
 	}
@@ -273,18 +278,38 @@ func (d *Device) Start() error {
 	}
 
 	d.started = true
-	d.startWorkers()
+	if err := d.startWorkers(); err != nil {
+		d.started = false
+		return err
+	}
 	return nil
 }
 
-func (d *Device) startWorkers() {
+func (d *Device) startWorkers() error {
 	d.workers = make([]*ioWorker, d.info.NrHWQueues)
-	for i := range d.info.NrHWQueues {
-		worker := newIOWorker(d, i, d.info.QueueDepth)
+
+	// Initialize all workers synchronously
+	for i := range int(d.info.NrHWQueues) {
+		worker := newIOWorker(d, uint16(i), d.info.QueueDepth)
+		if err := worker.Init(); err != nil {
+			// Cleanup already initialized workers
+			for j := range i {
+				if d.workers[j] != nil {
+					d.workers[j].Close()
+				}
+			}
+			return fmt.Errorf("worker %d init failed: %w", i, err)
+		}
 		d.workers[i] = worker
-		d.wg.Add(1)
-		go worker.run()
 	}
+
+	// Start event loops
+	for _, worker := range d.workers {
+		d.wg.Add(1)
+		go worker.Loop()
+	}
+
+	return nil
 }
 
 // Stop deactivates the device (UBLK_CMD_STOP_DEV) and stops IO workers.
@@ -339,7 +364,9 @@ func (d *Device) Delete() error {
 	}
 
 	if d.charDevFD != nil {
-		d.charDevFD.Close()
+		if err := d.charDevFD.Close(); err != nil {
+			logf("Device %d: char dev close error: %v", d.devID, err)
+		}
 		d.charDevFD = nil
 	}
 
@@ -352,7 +379,9 @@ func (d *Device) Delete() error {
 	}
 
 	if d.controlFD != nil {
-		d.controlFD.Close()
+		if err := d.controlFD.Close(); err != nil {
+			logf("Device %d: control fd close error: %v", d.devID, err)
+		}
 		d.controlFD = nil
 	}
 

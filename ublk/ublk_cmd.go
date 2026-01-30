@@ -5,10 +5,8 @@ import (
 )
 
 // UblkIOCommand represents a ublk IO command structure.
-// This is embedded in the uring_cmd structure.
+// Matches struct ublksrv_io_cmd in kernel.
 type UblkIOCommand struct {
-	Op     uint32
-	DevID  uint32
 	QID    uint16
 	Tag    uint16
 	Result uint64
@@ -34,22 +32,20 @@ func UblkIOCommandFromBytes(data []byte) *UblkIOCommand {
 }
 
 // NewFetchReqCommand creates a UBLK_IO_FETCH_REQ command.
-func NewFetchReqCommand(devID int, qid, tag uint16) *UblkIOCommand {
+// Returns command and the Op code.
+func NewFetchReqCommand(qid, tag uint16) (*UblkIOCommand, uint32) {
 	return &UblkIOCommand{
-		Op:    UBLK_IO_FETCH_REQ,
-		DevID: uint32(devID),
-		QID:   qid,
-		Tag:   tag,
-	}
+		QID: qid,
+		Tag: tag,
+	}, UBLK_IO_FETCH_REQ
 }
 
 // NewCommitAndFetchReqCommand creates a UBLK_IO_COMMIT_AND_FETCH_REQ command.
-func NewCommitAndFetchReqCommand(devID int, qid, tag uint16, result uint64) *UblkIOCommand {
+// Returns command and the Op code.
+func NewCommitAndFetchReqCommand(qid, tag uint16, result uint64) (*UblkIOCommand, uint32) {
 	return &UblkIOCommand{
-		Op:     UBLK_IO_COMMIT_AND_FETCH_REQ,
-		DevID:  uint32(devID),
 		QID:    qid,
 		Tag:    tag,
 		Result: result,
-	}
+	}, UBLK_IO_COMMIT_AND_FETCH_REQ
 }

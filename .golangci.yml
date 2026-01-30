@@ -18,7 +18,6 @@ linters:
     - cyclop
     - depguard
     - dupl
-    - errcheck        # Many Close() calls legitimately ignore errors
     - exhaustive
     - exhaustruct
     - funcorder       # Too opinionated about function ordering
@@ -44,9 +43,6 @@ linters:
     - testpackage
     - varnamelen
     - wrapcheck
-
-    # Security checks that don't apply to this kernel-interface code
-    - gosec
 
     # These require more work to enable
     - err113          # Requires defining error types

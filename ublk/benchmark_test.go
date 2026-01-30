@@ -14,10 +14,10 @@ func BenchmarkGetSetIODesc(b *testing.B) {
 	worker.mmapAddr = make([]byte, descSize*128)
 
 	desc := UblksrvIODesc{
-		Addr:    0x12345678,
-		Length:  4096,
-		OpFlags: UBLK_IO_F_FETCHED,
-		Tag:     0,
+		// Updated to match new struct fields
+		StartSector: 0,
+		NrSectors:   8,
+		OpFlags:     UBLK_IO_F_FETCHED,
 	}
 
 	b.ResetTimer()
@@ -28,64 +28,8 @@ func BenchmarkGetSetIODesc(b *testing.B) {
 	}
 }
 
-func BenchmarkBufferManagerGetIODescBuffer(b *testing.B) {
-	queueDepth := uint16(128)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	descArea := int(queueDepth) * descSize
-	requestArea := 256 * int(queueDepth)
-	bufferSize := 512 * 1024
-	total := descArea + requestArea + bufferSize
-
-	mmapAddr := make([]byte, total)
-	bm := NewBufferManager(mmapAddr, queueDepth)
-
-	desc := UblksrvIODesc{
-		Addr:   1000,
-		Length: 4096,
-	}
-
-	b.ResetTimer()
-	for b.Loop() {
-		_, _ = bm.GetIODescBuffer(desc)
-	}
-}
-
-func BenchmarkBufferManagerGetRequestData(b *testing.B) {
-	queueDepth := uint16(128)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	descArea := int(queueDepth) * descSize
-	requestArea := 256 * int(queueDepth)
-	bufferSize := 512 * 1024
-	total := descArea + requestArea + bufferSize
-
-	mmapAddr := make([]byte, total)
-	bm := NewBufferManager(mmapAddr, queueDepth)
-
-	b.ResetTimer()
-	for i := range b.N {
-		tag := uint16(i % int(queueDepth))
-		_, _ = bm.GetRequestData(tag)
-	}
-}
-
-func BenchmarkParseRequest(b *testing.B) {
-	buf := make([]byte, unsafe.Sizeof(UblkRequest{}))
-	req := (*UblkRequest)(unsafe.Pointer(&buf[0]))
-	req.StartSector = 8
-	req.NSectors = 16
-	req.Op = UBLK_IO_OP_READ
-
-	desc := UblksrvIODesc{}
-
-	b.ResetTimer()
-	for b.Loop() {
-		_, _ = ParseRequest(desc, buf)
-	}
-}
-
 func BenchmarkUblkIOCommandToBytes(b *testing.B) {
-	cmd := NewFetchReqCommand(0, 0, 0)
-
+	cmd, _ := NewFetchReqCommand(1, 1) // qid=1, tag=1
 	b.ResetTimer()
 	for b.Loop() {
 		_ = cmd.ToBytes()

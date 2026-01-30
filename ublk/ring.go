@@ -30,6 +30,9 @@ type Ring struct {
 	mmapSQ   []byte
 	mmapCQ   []byte
 	mmapSQEs []byte
+
+	// SQE size tracking
+	sqeSize uintptr
 }
 
 // RingOption configures ring creation.
@@ -39,6 +42,7 @@ type ringConfig struct {
 	singleIssuer bool
 	deferTaskrun bool
 	coopTaskrun  bool
+	sqe128       bool
 }
 
 // WithSingleIssuer enables IORING_SETUP_SINGLE_ISSUER (kernel 6.0+).
@@ -64,6 +68,13 @@ func WithDeferTaskrun() RingOption {
 func WithCoopTaskrun() RingOption {
 	return func(c *ringConfig) {
 		c.coopTaskrun = true
+	}
+}
+
+// WithSQE128 enables IORING_SETUP_SQE128 for 128-byte SQEs.
+func WithSQE128() RingOption {
+	return func(c *ringConfig) {
+		c.sqe128 = true
 	}
 }
 
@@ -118,6 +129,9 @@ func NewRingWithOptions(entries uint, flags uint, opts ...RingOption) (*Ring, er
 	if cfg.coopTaskrun {
 		flags |= IORING_SETUP_COOP_TASKRUN
 	}
+	if cfg.sqe128 {
+		flags |= IORING_SETUP_SQE128
+	}
 
 	// Create params struct
 	params := UringParams{
@@ -133,13 +147,18 @@ func NewRingWithOptions(entries uint, flags uint, opts ...RingOption) (*Ring, er
 	}
 
 	ring := &Ring{
-		fd:     int(fd),
-		params: params,
-		flags:  flags,
+		fd:      int(fd),
+		params:  params,
+		flags:   flags,
+		sqeSize: SizeOfUringSQE(),
+	}
+
+	if cfg.sqe128 {
+		ring.sqeSize = SizeOfUringSQE128()
 	}
 
 	if err := ring.mmapRings(entries); err != nil {
-		ring.Close()
+		_ = ring.Close() // Cleanup on error, best-effort
 		return nil, err
 	}
 
@@ -172,8 +191,7 @@ func (r *Ring) mmapRings(entries uint) error {
 	r.mmapCQ = cqPtr
 
 	// Map SQEs
-	sqeSize := int(SizeOfUringSQE())
-	sqesSize := int(entries) * sqeSize
+	sqesSize := int(entries) * int(r.sqeSize)
 	sqesPtr, err := unix.Mmap(r.fd, IORING_OFF_SQES, sqesSize,
 		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
 	if err != nil {
@@ -202,7 +220,11 @@ func (r *Ring) mmapRings(entries uint) error {
 	}
 
 	// Slice casting - keep pointer conversion in single expression to satisfy go vet
-	r.sqes = (*[1 << 20]UringSQE)(unsafe.Pointer(&sqesPtr[0]))[:entries:entries]
+	// Note: r.sqes is NOT initialized here anymore if using SQE128, or we can keep it for 64-bit backward compat
+	// But clearer to just rely on mmapSQEs byte slice and helper methods
+	if r.sqeSize == SizeOfUringSQE() {
+		r.sqes = (*[1 << 20]UringSQE)(unsafe.Pointer(&sqesPtr[0]))[:entries:entries]
+	}
 	r.cq.cqes = (*[1 << 20]UringCQE)(unsafe.Pointer(&cqPtr[cqOff.Cqes]))[:r.params.CQEntries:r.params.CQEntries]
 
 	return nil
@@ -214,32 +236,86 @@ func (r *Ring) Close() error {
 		return nil
 	}
 
+	var errs []error
+
 	if r.mmapSQ != nil {
-		unix.Munmap(r.mmapSQ)
+		if err := unix.Munmap(r.mmapSQ); err != nil {
+			errs = append(errs, fmt.Errorf("munmap SQ: %w", err))
+		}
+		r.mmapSQ = nil
 	}
 	if r.mmapCQ != nil {
-		unix.Munmap(r.mmapCQ)
+		if err := unix.Munmap(r.mmapCQ); err != nil {
+			errs = append(errs, fmt.Errorf("munmap CQ: %w", err))
+		}
+		r.mmapCQ = nil
 	}
 	if r.mmapSQEs != nil {
-		unix.Munmap(r.mmapSQEs)
+		if err := unix.Munmap(r.mmapSQEs); err != nil {
+			errs = append(errs, fmt.Errorf("munmap SQEs: %w", err))
+		}
+		r.mmapSQEs = nil
 	}
 
-	unix.Close(r.fd)
+	if err := unix.Close(r.fd); err != nil {
+		errs = append(errs, fmt.Errorf("close fd: %w", err))
+	}
 	r.fd = -1
-	return nil
+
+	return errors.Join(errs...)
 }
 
-// GetSQE gets a new submission queue entry.
+// GetSQE gets a new submission queue entry (standard 64-byte).
+// Returns error if ring was initialized with SQE128.
 func (r *Ring) GetSQE() (*UringSQE, error) {
+	if r.sqeSize != SizeOfUringSQE() {
+		return nil, errors.New("Ring initialized with SQE128, use GetSQE128")
+	}
+
 	head := r.sq.sqeHead
 	tail := r.sq.sqeTail
 
 	if tail-head >= uint32(len(r.sqes)) {
-		return nil, errors.New("submission queue full")
+		// Refresh head from kernel to see if entries have been consumed
+		head = atomic.LoadUint32(r.sq.head)
+		r.sq.sqeHead = head
+		if tail-head >= uint32(len(r.sqes)) {
+			return nil, errors.New("submission queue full")
+		}
 	}
 
 	sqe := &r.sqes[tail&*r.sq.ringMask]
 	*sqe = UringSQE{} // Clear entry
+	r.sq.sqeTail++
+
+	return sqe, nil
+}
+
+// GetSQE128 gets a new 128-byte submission queue entry.
+// Returns error if ring was NOT initialized with SQE128.
+func (r *Ring) GetSQE128() (*UringSQE128, error) {
+	if r.sqeSize != SizeOfUringSQE128() {
+		return nil, errors.New("Ring not initialized with SQE128")
+	}
+
+	head := r.sq.sqeHead
+	tail := r.sq.sqeTail
+	entries := uint32(len(r.mmapSQEs)) / uint32(r.sqeSize)
+
+	if tail-head >= entries {
+		// Refresh head from kernel
+		head = atomic.LoadUint32(r.sq.head)
+		r.sq.sqeHead = head
+		if tail-head >= entries {
+			return nil, errors.New("submission queue full")
+		}
+	}
+
+	idx := tail & *r.sq.ringMask
+	offset := uintptr(idx) * r.sqeSize
+	sqe := (*UringSQE128)(unsafe.Pointer(&r.mmapSQEs[offset]))
+
+	*sqe = UringSQE128{} // Clear entry
 	r.sq.sqeTail++
 
 	return sqe, nil

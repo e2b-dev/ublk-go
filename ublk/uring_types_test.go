@@ -25,11 +25,15 @@ func TestUringCQESize(t *testing.T) {
 
 func TestUringParamsSize(t *testing.T) {
 	t.Parallel()
-	size := SizeOfUringParams()
-	if size == 0 {
-		t.Error("UringParams size should not be zero")
+	if size := SizeOfUringParams(); size != 120 {
+		t.Errorf("expected SizeOfUringParams to be 120, got %d", size)
 	}
-	t.Logf("UringParams size: %d bytes", size)
+}
+
+func TestSizeOfUringSQE128(t *testing.T) {
+	if size := SizeOfUringSQE128(); size != 128 {
+		t.Errorf("expected SizeOfUringSQE128 to be 128, got %d", size)
+	}
 }
 
 func TestUblksrvIODescSize(t *testing.T) {
@@ -50,24 +54,6 @@ func TestUblkParamsSize(t *testing.T) {
 	t.Logf("UblkParams size: %d bytes", size)
 }
 
-func TestUblkRequestSize(t *testing.T) {
-	t.Parallel()
-	size := unsafe.Sizeof(UblkRequest{})
-	if size == 0 {
-		t.Error("UblkRequest size should not be zero")
-	}
-	t.Logf("UblkRequest size: %d bytes", size)
-}
-
-func TestUblkSegmentSize(t *testing.T) {
-	t.Parallel()
-	size := unsafe.Sizeof(UblkSegment{})
-	if size == 0 {
-		t.Error("UblkSegment size should not be zero")
-	}
-	t.Logf("UblkSegment size: %d bytes", size)
-}
-
 func TestUblkCtrlDevInfoSize(t *testing.T) {
 	t.Parallel()
 	size := unsafe.Sizeof(UblksrvCtrlDevInfo{})
@@ -84,4 +70,12 @@ func TestUblkQueueAffinitySize(t *testing.T) {
 		t.Error("UblkQueueAffinity size should not be zero")
 	}
 	t.Logf("UblkQueueAffinity size: %d bytes", size)
+}
+
+func TestUblksrvCtrlCmdSize(t *testing.T) {
+	t.Parallel()
+	size := unsafe.Sizeof(UblksrvCtrlCmd{})
+	if size != 32 {
+		t.Errorf("UblksrvCtrlCmd size should be 32, got %d", size)
+	}
 }

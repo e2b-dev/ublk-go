@@ -19,6 +19,34 @@ type UringSQE struct {
 	Addr2       [2]uint64
 }
 
+// UringSQE128 represents a 128-byte io_uring submission queue entry.
+// With IORING_SETUP_SQE128, the SQE size is doubled to 128 bytes.
+// The extra space is used for commands (like ublk) that need more than a pointer.
+type UringSQE128 struct {
+	// Standard SQE fields (first 48 bytes)
+	Opcode      uint8
+	Flags       uint8
+	Ioprio      uint16
+	Fd          int32
+	Off         uint64
+	Addr        uint64
+	Len         uint32
+	OpFlags     uint32
+	UserData    uint64
+	BufIndex    uint16
+	Personality uint16
+	SpliceFdIn  int32
+
+	// Extended 80 bytes for commands (starts at offset 48)
+	// This covers the area of addr2/pad (16 bytes) + extended 64 bytes
+	Cmd [80]byte
+}
+
+// SizeOfUringSQE128 returns the size of struct io_uring_sqe (128 bytes).
+func SizeOfUringSQE128() uintptr {
+	return unsafe.Sizeof(UringSQE128{})
+}
+
 // UringCQE represents an io_uring completion queue entry.
 type UringCQE struct {
 	UserData uint64

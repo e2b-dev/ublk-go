@@ -6,14 +6,12 @@ import (
 
 // Linux ioctl encoding constants.
 const (
-	iocNone  = 0
 	iocWrite = 1
 	iocRead  = 2
 
 	iocNrBits   = 8
 	iocTypeBits = 8
 	iocSizeBits = 14
-	iocDirBits  = 2
 
 	iocNrShift   = 0
 	iocTypeShift = iocNrShift + iocNrBits
@@ -38,14 +36,13 @@ const ublkIoctlType = 'u'
 
 // Raw command numbers (from kernel header).
 const (
-	ublkCmdGetQueueAffinity = 0x01
-	ublkCmdGetDevInfo       = 0x02
-	ublkCmdAddDev           = 0x04
-	ublkCmdDelDev           = 0x05
-	ublkCmdStartDev         = 0x06
-	ublkCmdStopDev          = 0x07
-	ublkCmdSetParams        = 0x08
-	ublkCmdGetParams        = 0x09
+	ublkCmdGetDevInfo = 0x02
+	ublkCmdAddDev     = 0x04
+	ublkCmdDelDev     = 0x05
+	ublkCmdStartDev   = 0x06
+	ublkCmdStopDev    = 0x07
+	ublkCmdSetParams  = 0x08
+	ublkCmdGetParams  = 0x09
 )
 
 // UblksrvCtrlCmd is the control command structure passed to ioctls.

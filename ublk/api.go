@@ -215,21 +215,21 @@ func CreateDevice(backend Backend, config Config) (*Device, error) {
 	// Add the device
 	err = dev.Add(config.NrHWQueues, config.QueueDepth)
 	if err != nil {
-		dev.Delete()
+		_ = dev.Delete() // Cleanup on error, best-effort
 		return nil, fmt.Errorf("failed to add device: %w", err)
 	}
 
 	// Set parameters
 	err = dev.SetParams(config.BlockSize, config.Size, config.MaxSectors)
 	if err != nil {
-		dev.Delete()
+		_ = dev.Delete() // Cleanup on error, best-effort
 		return nil, fmt.Errorf("failed to set params: %w", err)
 	}
 
 	// Start the device
 	err = dev.Start()
 	if err != nil {
-		dev.Delete()
+		_ = dev.Delete() // Cleanup on error, best-effort
 		return nil, fmt.Errorf("failed to start device: %w", err)
 	}
 

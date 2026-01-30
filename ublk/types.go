@@ -51,6 +51,25 @@ const (
 	UBLK_IO_F_NEED_REG_BUF = 1 << 8 // Auto buffer registration failed, manual needed
 )
 
+// Constants for USER_COPY encoded offset (from ublk_cmd.h).
+const (
+	UBLK_IO_BUF_BITS = 25
+	UBLK_TAG_BITS    = 16
+	UBLK_QID_BITS    = 12
+
+	UBLK_TAG_OFF = UBLK_IO_BUF_BITS
+	UBLK_QID_OFF = UBLK_TAG_OFF + UBLK_TAG_BITS
+
+	UBLKSRV_IO_BUF_OFFSET = 0x80000000
+)
+
+func ublkUserCopyPos(qid, tag uint16, offset uint32) int64 {
+	return int64(UBLKSRV_IO_BUF_OFFSET) +
+		((int64(qid) << UBLK_QID_OFF) |
+			(int64(tag) << UBLK_TAG_OFF) |
+			int64(offset))
+}
+
 // UblkParams represents device parameters.
 type UblkParams struct {
 	Basic struct {
@@ -73,15 +92,20 @@ type UblkParams struct {
 // UblkDevInfo represents device information (alias for UblksrvCtrlDevInfo).
 type UblkDevInfo = UblksrvCtrlDevInfo
 
-// UblksrvIODesc represents an IO descriptor.
+// UblksrvIODesc represents an IO descriptor (from kernel to server).
+// Matches struct ublksrv_io_desc in linux/ublk_cmd.h.
 type UblksrvIODesc struct {
-	Addr     uint64
-	Length   uint32
-	OpFlags  uint16
-	EndIO    uint16
-	Tag      uint16
-	Pad      uint16
-	Reserved [4]uint64
+	// op: bit 0-7, flags: bit 8-31
+	OpFlags uint32
+
+	// union: nr_sectors or nr_zones
+	NrSectors uint32
+
+	// start sector for this io
+	StartSector uint64
+
+	// buffer address in ublksrv vm space, from ublk driver
+	Addr uint64
 }
 
 // UblkQueueAffinity represents queue affinity information.

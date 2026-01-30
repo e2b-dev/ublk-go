@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -772,5 +774,281 @@ func TestIntegrationStress(t *testing.T) {
 
 	if totalErrors > 0 {
 		t.Errorf("Stress test had %d errors", totalErrors)
+	}
+}
+
+// TestIntegrationFilesystem tests filesystem creation and mounting.
+func TestIntegrationFilesystem(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	// Check for mkfs.ext4
+	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
+		t.Skip("mkfs.ext4 not found")
+	}
+
+	const deviceSize = 64 * 1024 * 1024 // 64MB (min for some FS)
+	const blockSize = 4096
+
+	backend := newIntegrationBackend(deviceSize)
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = blockSize
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	blockDevPath := dev.BlockDevicePath()
+	t.Logf("Created device for FS test: %s", blockDevPath)
+
+	// Create ext4 filesystem
+	cmd := exec.Command("mkfs.ext4", "-F", blockDevPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mkfs.ext4 failed: %v\nOutput: %s", err, out)
+	}
+	t.Log("Filesystem created")
+
+	// Create mount point
+	mountPoint, err := os.MkdirTemp("", "ublk-mount-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create mount point: %v", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	// Mount
+	cmd = exec.Command("mount", blockDevPath, mountPoint)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mount failed: %v\nOutput: %s", err, out)
+	}
+	// Defer unmount (using umount -l to be safe against busy loops if test fails)
+	defer exec.Command("umount", mountPoint).Run()
+
+	t.Logf("Mounted at %s", mountPoint)
+
+	// File operations
+	testFile := filepath.Join(mountPoint, "hello.txt")
+	content := []byte("Hello, ublk filesystem!")
+
+	// Write
+	if err := os.WriteFile(testFile, content, 0644); err != nil {
+		t.Fatalf("Failed to write to file: %v", err)
+	}
+
+	// Sync to ensure data hits the device (via backend)
+	unix.Sync()
+
+	// Read
+	readBack, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read from file: %v", err)
+	}
+
+	if !bytes.Equal(readBack, content) {
+		t.Errorf("File content mismatch: got %q, want %q", readBack, content)
+	}
+
+	t.Log("File operations passed")
+
+	// Unmount explicitly to checking exit code
+	if err := exec.Command("umount", mountPoint).Run(); err != nil {
+		t.Fatalf("Unmount failed: %v", err)
+	}
+	t.Log("Unmounted")
+}
+
+// TestIntegrationMmapCoherency tests consistency between mmap and standard I/O.
+func TestIntegrationMmapCoherency(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	const deviceSize = 16 * 1024 * 1024
+	const blockSize = 4096
+
+	backend := newIntegrationBackend(deviceSize)
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = blockSize
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
+	if err != nil {
+		t.Fatalf("Failed to open: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Mmap the device
+	data, err := unix.Mmap(fd, 0, deviceSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	if err != nil {
+		t.Fatalf("Failed to mmap: %v", err)
+	}
+	defer unix.Munmap(data)
+
+	t.Run("MmapWrite_PreadRead", func(t *testing.T) {
+		pattern := []byte("Written via Mmap")
+		offset := 0
+		// Write to mmap
+		copy(data[offset:], pattern)
+		if err := unix.Msync(data[offset:offset+4096], unix.MS_SYNC); err != nil {
+			t.Fatalf("Msync failed: %v", err)
+		}
+
+		// Read via Pread
+		buf := make([]byte, len(pattern))
+		if _, err := unix.Pread(fd, buf, int64(offset)); err != nil {
+			t.Fatalf("Pread failed: %v", err)
+		}
+
+		if !bytes.Equal(buf, pattern) {
+			t.Errorf("Mismatch: Mmap wrote %q, Pread read %q", pattern, buf)
+		}
+	})
+
+	t.Run("Pwrite_MmapRead", func(t *testing.T) {
+		pattern := []byte("Written via Pwrite")
+		offset := 4096
+		// Write via Pwrite
+		if _, err := unix.Pwrite(fd, pattern, int64(offset)); err != nil {
+			t.Fatalf("Pwrite failed: %v", err)
+		}
+
+		// Read from mmap (should be coherent)
+		got := data[offset : offset+len(pattern)]
+		if !bytes.Equal(got, pattern) {
+			// Try msync to invalidate? Actually MAP_SHARED + Page Cache should make it visible immediately
+			// if the kernel updates the page.
+			t.Errorf("Mismatch: Pwrite wrote %q, Mmap saw %q", pattern, got)
+		}
+	})
+
+	t.Log("Mmap coherency verified")
+}
+
+// TestIntegrationMsync tests that msync triggers flush.
+func TestIntegrationMsync(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+
+	const deviceSize = 16 * 1024 * 1024
+	const blockSize = 4096
+
+	flushCount := 0
+	backend := &flushTestBackend{
+		integrationBackend: newIntegrationBackend(deviceSize),
+		flushCount:         &flushCount,
+	}
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = blockSize
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatalf("CreateDevice failed: %v", err)
+	}
+	defer dev.Delete()
+
+	time.Sleep(100 * time.Millisecond)
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("Failed to open: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Mmap
+	data, err := unix.Mmap(fd, 0, deviceSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	if err != nil {
+		t.Fatalf("Failed to mmap: %v", err)
+	}
+	defer unix.Munmap(data)
+
+	// Write to mmap
+	copy(data[0:], []byte("Sync Me"))
+
+	// Verify no flush yet (approximate, since OS might flush background)
+	initialFlushes := *backend.flushCount
+
+	// Msync with MS_SYNC should trigger flush
+	if err := unix.Msync(data[:4096], unix.MS_SYNC); err != nil {
+		t.Fatalf("Msync failed: %v", err)
+	}
+
+	// Give it a moment to process
+	time.Sleep(100 * time.Millisecond)
+
+	if *backend.flushCount <= initialFlushes {
+		t.Errorf("Msync did not trigger backend flush. Count: %d -> %d", initialFlushes, *backend.flushCount)
+	} else {
+		t.Logf("Msync triggered flush (count: %d)", *backend.flushCount)
+	}
+}
+
+func TestIntegrationFirecrackerCompat(t *testing.T) {
+	// Verifies compatibility with Firecracker's live migration pattern:
+	// mmap(MAP_SHARED|MAP_NORESERVE, PROT_READ|PROT_WRITE) + msync(MS_SYNC)
+
+	requireRoot(t)
+	dev, err := createTestDevice(t, 1024*1024, 1, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dev.Delete()
+
+	// Wait for device to be ready
+	time.Sleep(100 * time.Millisecond)
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("Failed to open device: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Firecracker config: PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE
+	// Note: MAP_NORESERVE is not strictly defined in x/sys/unix for all archs universally stable,
+	// but it is standard Linux. We use unix.MAP_NORESERVE.
+	data, err := unix.Mmap(fd, 0, 1024*1024, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_NORESERVE)
+	if err != nil {
+		t.Fatalf("Mmap failed: %v", err)
+	}
+	defer unix.Munmap(data)
+
+	// Write data to mmap
+	copy(data[:5], []byte("TEST1"))
+
+	// Flush using MS_SYNC (Firecracker pattern)
+	if err := unix.Msync(data, unix.MS_SYNC); err != nil {
+		t.Fatalf("Msync failed: %v", err)
+	}
+
+	// Verify data persistence by reading back via syscall (bypassing mmap cache if possible, or just consistency)
+	buf := make([]byte, 5)
+	if _, err := unix.Pread(fd, buf, 0); err != nil {
+		t.Fatalf("Pread failed: %v", err)
+	}
+	if string(buf) != "TEST1" {
+		t.Errorf("Expected 'TEST1', got '%s'", string(buf))
 	}
 }

@@ -149,23 +149,22 @@ func TestUblkParamsStructure(t *testing.T) {
 func TestUblksrvIODescStructure(t *testing.T) {
 	t.Parallel()
 	desc := UblksrvIODesc{
-		Addr:    0x1234567890ABCDEF,
-		Length:  4096,
-		OpFlags: UBLK_IO_F_FETCHED,
-		EndIO:   0,
-		Tag:     42,
+		Addr:        0x1234567890ABCDEF,
+		NrSectors:   128,
+		StartSector: 100,
+		OpFlags:     UBLK_IO_F_FETCHED,
 	}
 
 	if desc.Addr != 0x1234567890ABCDEF {
 		t.Error("Failed to set Addr")
 	}
-	if desc.Length != 4096 {
-		t.Error("Failed to set Length")
+	if desc.NrSectors != 128 {
+		t.Error("Failed to set NrSectors")
 	}
 	if desc.OpFlags != UBLK_IO_F_FETCHED {
 		t.Error("Failed to set OpFlags")
 	}
-	if desc.Tag != 42 {
-		t.Error("Failed to set Tag")
+	if desc.StartSector != 100 {
+		t.Error("Failed to set StartSector")
 	}
 }

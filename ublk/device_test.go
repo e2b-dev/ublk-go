@@ -1,6 +1,7 @@
 package ublk
 
 import (
+	"os"
 	"testing"
 )
 
@@ -22,23 +23,26 @@ func TestDeviceErrors(t *testing.T) {
 
 func TestUblkCommand(t *testing.T) {
 	t.Parallel()
-	cmd := NewFetchReqCommand(0, 0, 0)
-	if cmd.Op != UBLK_IO_FETCH_REQ {
-		t.Errorf("Expected op %d, got %d", UBLK_IO_FETCH_REQ, cmd.Op)
+	cmd, op := NewFetchReqCommand(0, 0)
+	if op != UBLK_IO_FETCH_REQ {
+		t.Errorf("Expected op %d, got %d", UBLK_IO_FETCH_REQ, op)
+	}
+	if cmd.QID != 0 || cmd.Tag != 0 {
+		t.Error("Command fields not set correctly")
 	}
 
-	cmd2 := NewCommitAndFetchReqCommand(1, 2, 3, 0)
-	if cmd2.Op != UBLK_IO_COMMIT_AND_FETCH_REQ {
-		t.Errorf("Expected op %d, got %d", UBLK_IO_COMMIT_AND_FETCH_REQ, cmd2.Op)
+	cmd2, op2 := NewCommitAndFetchReqCommand(2, 3, 0)
+	if op2 != UBLK_IO_COMMIT_AND_FETCH_REQ {
+		t.Errorf("Expected op %d, got %d", UBLK_IO_COMMIT_AND_FETCH_REQ, op2)
 	}
-	if cmd2.DevID != 1 || cmd2.QID != 2 || cmd2.Tag != 3 {
+	if cmd2.QID != 2 || cmd2.Tag != 3 {
 		t.Error("Command fields not set correctly")
 	}
 }
 
 func TestUblkIOCommandBytes(t *testing.T) {
 	t.Parallel()
-	cmd := NewFetchReqCommand(42, 7, 99)
+	cmd, _ := NewFetchReqCommand(7, 99)
 
 	// ToBytes should return a valid slice
 	data := cmd.ToBytes()
@@ -51,7 +55,7 @@ func TestUblkIOCommandBytes(t *testing.T) {
 	if parsed == nil {
 		t.Fatal("UblkIOCommandFromBytes returned nil")
 	}
-	if parsed.Op != cmd.Op || parsed.DevID != cmd.DevID || parsed.QID != cmd.QID || parsed.Tag != cmd.Tag {
+	if parsed.QID != cmd.QID || parsed.Tag != cmd.Tag {
 		t.Error("Round-trip failed: fields don't match")
 	}
 
@@ -63,10 +67,14 @@ func TestUblkIOCommandBytes(t *testing.T) {
 
 func TestUblkIOCommandSize(t *testing.T) {
 	t.Parallel()
-	cmd := NewFetchReqCommand(0, 0, 0)
+	cmd, _ := NewFetchReqCommand(0, 0)
 	size := cmd.Size()
-	if size == 0 {
-		t.Error("Size should not be zero")
+
+	// ublksrv_io_cmd is 24 bytes (2+2+4(pad)+8+8)
+	const expectedSize = 24
+
+	if size != expectedSize {
+		t.Errorf("Size should be %d, got %d", expectedSize, size)
 	}
 	// Size should match ToBytes length
 	if int(size) != len(cmd.ToBytes()) {
@@ -189,5 +197,91 @@ func TestDeviceHelpers(t *testing.T) {
 	}
 	if d2.HasUserCopy() {
 		t.Error("HasUserCopy() should return false for default device")
+	}
+}
+
+func TestStartWorkersError(t *testing.T) {
+	t.Parallel()
+	d := &Device{
+		info: UblksrvCtrlDevInfo{
+			NrHWQueues: 1,
+			QueueDepth: 10000, // Too large, NewRing will fail
+		},
+		charDevFD: os.NewFile(0, "mock"), // Need a dummy FD so Init doesn't crash on Fd() call
+	}
+
+	err := d.startWorkers()
+	if err == nil {
+		t.Error("startWorkers() should fail with invalid queue depth")
+	}
+}
+
+func TestNewDevice(t *testing.T) {
+	// Setup mock control device
+	tmp, err := os.CreateTemp(t.TempDir(), "ublk-control")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tmp.Close()
+
+	// Override path
+	origPath := controlDevicePath
+	controlDevicePath = tmp.Name()
+	defer func() { controlDevicePath = origPath }()
+
+	d, err := NewDevice(
+		func(p []byte, off int64) (int, error) { return 0, nil },
+		func(p []byte, off int64) (int, error) { return 0, nil },
+	)
+	if err != nil {
+		t.Fatalf("NewDevice failed: %v", err)
+	}
+	if d.controlFD == nil {
+		t.Error("controlFD not set")
+	}
+	d.controlFD.Close() // cleanup
+}
+
+func TestNewDeviceWithBackend(t *testing.T) {
+	// Setup mock control device
+	tmp, err := os.CreateTemp(t.TempDir(), "ublk-control")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tmp.Close()
+
+	// Override path
+	origPath := controlDevicePath
+	controlDevicePath = tmp.Name()
+	defer func() { controlDevicePath = origPath }()
+
+	backend := &MockBackend{}
+	d, err := NewDeviceWithBackend(backend, WithZeroCopy())
+	if err != nil {
+		t.Fatalf("NewDeviceWithBackend failed: %v", err)
+	}
+	if d.controlFD == nil {
+		t.Error("controlFD not set")
+	}
+	if !d.HasZeroCopy() {
+		t.Error("WithZeroCopy option not applied")
+	}
+	d.controlFD.Close() // cleanup
+}
+
+func TestNewDeviceError(t *testing.T) {
+	// Override path to non-existent file
+	origPath := controlDevicePath
+	controlDevicePath = "/non/existent/path"
+	defer func() { controlDevicePath = origPath }()
+
+	_, err := NewDevice(nil, nil)
+	if err == nil {
+		t.Error("Expected error for non-existent control device")
+	}
+
+	_, err = NewDeviceWithBackend(&MockBackend{})
+	if err == nil {
+		t.Error("Expected error for non-existent control device")
 	}
 }
