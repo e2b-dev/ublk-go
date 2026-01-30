@@ -1,6 +1,7 @@
 package ublk
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -101,5 +102,41 @@ func TestIOResultCodes(t *testing.T) {
 	}
 	if IOResultENOTSUP != 95 {
 		t.Errorf("IOResultENOTSUP should be 95, got %d", IOResultENOTSUP)
+	}
+}
+
+// TestStatsConcurrent stress tests Stats under concurrent access.
+func TestStatsConcurrent(t *testing.T) {
+	s := &Stats{}
+	const goroutines = 100
+	const opsPerGoroutine = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range opsPerGoroutine {
+				s.recordOp(UBLK_IO_OP_READ, 4096, true)
+				s.recordOp(UBLK_IO_OP_WRITE, 4096, true)
+				_ = s.Snapshot()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	snap := s.Snapshot()
+	expectedOps := uint64(goroutines * opsPerGoroutine)
+
+	if snap.Reads != expectedOps {
+		t.Errorf("Expected %d reads, got %d", expectedOps, snap.Reads)
+	}
+	if snap.Writes != expectedOps {
+		t.Errorf("Expected %d writes, got %d", expectedOps, snap.Writes)
+	}
+	if snap.BytesRead != expectedOps*4096 {
+		t.Errorf("Expected %d bytes read, got %d", expectedOps*4096, snap.BytesRead)
 	}
 }
