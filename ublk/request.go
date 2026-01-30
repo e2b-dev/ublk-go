@@ -1,7 +1,6 @@
 package ublk
 
 import (
-	"encoding/binary"
 	"errors"
 	"unsafe"
 )
@@ -48,39 +47,4 @@ func (r *UblkRequest) GetOffset(blockSize uint32) int64 {
 // GetLength calculates the total length in bytes.
 func (r *UblkRequest) GetLength(blockSize uint32) int64 {
 	return int64(r.NSectors) * int64(blockSize)
-}
-
-// ReadRequestData reads the request data structure.
-// The actual location depends on ublk implementation.
-func ReadRequestData(desc UblksrvIODesc, mmapAddr []byte, queueDepth uint16) ([]byte, error) {
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	requestAreaOffset := int(queueDepth) * descSize
-
-	if requestAreaOffset >= len(mmapAddr) {
-		return nil, ErrInvalidRequest
-	}
-
-	requestSize := requestDataSize
-	if requestAreaOffset+requestSize > len(mmapAddr) {
-		requestSize = len(mmapAddr) - requestAreaOffset
-	}
-
-	return mmapAddr[requestAreaOffset : requestAreaOffset+requestSize], nil
-}
-
-// WriteResponse writes the response back to the mmap'd descriptor area.
-func WriteResponse(desc *UblksrvIODesc, result int32, mmapAddr []byte, tag uint16, queueDepth uint16) {
-	desc.EndIO = uint16(result)
-	desc.OpFlags &^= UBLK_IO_F_FETCHED
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	offset := int(tag) * descSize
-
-	if offset+descSize <= len(mmapAddr) {
-		binary.LittleEndian.PutUint64(mmapAddr[offset:], desc.Addr)
-		binary.LittleEndian.PutUint32(mmapAddr[offset+8:], desc.Length)
-		binary.LittleEndian.PutUint16(mmapAddr[offset+12:], desc.OpFlags)
-		binary.LittleEndian.PutUint16(mmapAddr[offset+14:], desc.EndIO)
-		binary.LittleEndian.PutUint16(mmapAddr[offset+16:], desc.Tag)
-	}
 }

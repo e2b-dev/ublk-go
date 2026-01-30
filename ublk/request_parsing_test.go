@@ -1,7 +1,6 @@
 package ublk
 
 import (
-	"encoding/binary"
 	"errors"
 	"testing"
 	"unsafe"
@@ -46,92 +45,6 @@ func TestUblkRequestOffsetsAndLength(t *testing.T) {
 	}
 }
 
-func TestReadRequestData(t *testing.T) {
-	queueDepth := uint16(2)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	requestOffset := int(queueDepth) * descSize
-	mmapAddr := make([]byte, requestOffset+512)
-
-	pattern := []byte{1, 2, 3, 4}
-	copy(mmapAddr[requestOffset:], pattern)
-
-	data, err := ReadRequestData(UblksrvIODesc{}, mmapAddr, queueDepth)
-	if err != nil {
-		t.Fatalf("ReadRequestData returned error: %v", err)
-	}
-	if len(data) != 256 {
-		t.Fatalf("expected request slice size 256, got %d", len(data))
-	}
-	if !bytesEqualPrefix(data, pattern) {
-		t.Fatal("request data does not match expected pattern")
-	}
-}
-
-func TestReadRequestDataInvalid(t *testing.T) {
-	queueDepth := uint16(4)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	mmapAddr := make([]byte, (int(queueDepth)*descSize)-1)
-
-	_, err := ReadRequestData(UblksrvIODesc{}, mmapAddr, queueDepth)
-	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("expected ErrInvalidRequest, got %v", err)
-	}
-}
-
-func TestWriteResponseUpdatesDescriptor(t *testing.T) {
-	queueDepth := uint16(4)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	mmapAddr := make([]byte, descSize*int(queueDepth))
-
-	desc := &UblksrvIODesc{
-		Addr:    0x1111222233334444,
-		Length:  4096,
-		OpFlags: UBLK_IO_F_FETCHED | UBLK_IO_F_NEED_GET_DATA,
-		Tag:     42,
-	}
-
-	WriteResponse(desc, 7, mmapAddr, 1, queueDepth)
-
-	if desc.EndIO != 7 {
-		t.Fatalf("expected EndIO to be 7, got %d", desc.EndIO)
-	}
-	if desc.OpFlags&UBLK_IO_F_FETCHED != 0 {
-		t.Fatal("expected fetched flag to be cleared")
-	}
-	if desc.OpFlags&UBLK_IO_F_NEED_GET_DATA == 0 {
-		t.Fatal("need_get_data flag should remain set")
-	}
-
-	offset := descSize * 1
-	if got := binary.LittleEndian.Uint64(mmapAddr[offset:]); got != desc.Addr {
-		t.Fatalf("unexpected addr written: 0x%x", got)
-	}
-	if got := binary.LittleEndian.Uint32(mmapAddr[offset+8:]); got != desc.Length {
-		t.Fatalf("unexpected length written: %d", got)
-	}
-	if got := binary.LittleEndian.Uint16(mmapAddr[offset+12:]); got != desc.OpFlags {
-		t.Fatalf("unexpected opflags written: %d", got)
-	}
-	if got := binary.LittleEndian.Uint16(mmapAddr[offset+14:]); got != desc.EndIO {
-		t.Fatalf("unexpected endio written: %d", got)
-	}
-	if got := binary.LittleEndian.Uint16(mmapAddr[offset+16:]); got != desc.Tag {
-		t.Fatalf("unexpected tag written: %d", got)
-	}
-}
-
-func bytesEqualPrefix(buf []byte, prefix []byte) bool {
-	if len(prefix) > len(buf) {
-		return false
-	}
-	for i := range prefix {
-		if buf[i] != prefix[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestUblkRequestSegments(t *testing.T) {
 	req := &UblkRequest{
 		Op:          UBLK_IO_OP_READ,
@@ -174,39 +87,47 @@ func TestUblkRequestAllOperations(t *testing.T) {
 	}
 }
 
-func TestReadRequestDataPartialBuffer(t *testing.T) {
-	queueDepth := uint16(2)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	requestOffset := int(queueDepth) * descSize
-	// Make buffer that only has 100 bytes after request offset
-	mmapAddr := make([]byte, requestOffset+100)
-
-	data, err := ReadRequestData(UblksrvIODesc{}, mmapAddr, queueDepth)
-	if err != nil {
-		t.Fatalf("ReadRequestData returned error: %v", err)
+func TestUblkRequestLargeValues(t *testing.T) {
+	req := &UblkRequest{
+		StartSector: 0xFFFFFFFFFFFFFFFF,
+		NSectors:    0xFFFFFFFF,
 	}
-	// Should return partial data (100 bytes instead of 256)
-	if len(data) != 100 {
-		t.Errorf("Expected 100 bytes, got %d", len(data))
+	blockSize := uint32(4096)
+
+	// These should not overflow or panic
+	offset := req.GetOffset(blockSize)
+	length := req.GetLength(blockSize)
+
+	if offset == 0 || length == 0 {
+		t.Error("Large values should produce non-zero results")
 	}
 }
 
-func TestWriteResponseBoundsCheck(t *testing.T) {
-	queueDepth := uint16(2)
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	// Make buffer too small for tag 1
-	mmapAddr := make([]byte, descSize)
-
-	desc := &UblksrvIODesc{
-		Addr:   0x1234,
-		Length: 1024,
+func TestUblkSegmentStructure(t *testing.T) {
+	seg := UblkSegment{
+		Addr: 0x123456789ABCDEF0,
+		Len:  0xDEADBEEF,
+		Pad:  0,
 	}
 
-	// Should not panic - silently handle bounds check
-	WriteResponse(desc, 0, mmapAddr, 1, queueDepth)
+	if seg.Addr != 0x123456789ABCDEF0 {
+		t.Error("Segment Addr mismatch")
+	}
+	if seg.Len != 0xDEADBEEF {
+		t.Error("Segment Len mismatch")
+	}
+}
 
-	// desc should still be updated locally
-	if desc.EndIO != 0 {
-		t.Error("desc.EndIO should be updated")
+func TestParseRequestEmptyData(t *testing.T) {
+	_, err := ParseRequest(UblksrvIODesc{}, []byte{})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for empty data, got %v", err)
+	}
+}
+
+func TestParseRequestNilData(t *testing.T) {
+	_, err := ParseRequest(UblksrvIODesc{}, nil)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest for nil data, got %v", err)
 	}
 }

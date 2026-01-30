@@ -80,7 +80,54 @@ func DefaultConfig() Config {
 	}
 }
 
-// Backend represents the storage backend for the ublk device
+// validate checks and applies defaults to the configuration.
+func (c *Config) validate() error {
+	// Apply defaults
+	if c.BlockSize == 0 {
+		c.BlockSize = 512
+	}
+	if c.Size == 0 {
+		c.Size = 1024 * 1024 * 1024
+	}
+	if c.MaxSectors == 0 {
+		c.MaxSectors = 256
+	}
+	if c.NrHWQueues == 0 {
+		c.NrHWQueues = 1
+	}
+	if c.QueueDepth == 0 {
+		c.QueueDepth = 128
+	}
+
+	// Validate BlockSize is power of 2 and at least 512
+	if c.BlockSize < 512 {
+		return fmt.Errorf("BlockSize must be at least 512, got %d", c.BlockSize)
+	}
+	if c.BlockSize&(c.BlockSize-1) != 0 {
+		return fmt.Errorf("BlockSize must be a power of 2, got %d", c.BlockSize)
+	}
+
+	// Validate Size is multiple of BlockSize
+	if c.Size%c.BlockSize != 0 {
+		return fmt.Errorf("Size (%d) must be a multiple of BlockSize (%d)", c.Size, c.BlockSize)
+	}
+
+	// Validate Size is not zero
+	if c.Size == 0 {
+		return fmt.Errorf("Size must be greater than 0")
+	}
+
+	// Validate queue depth is power of 2
+	if c.QueueDepth&(c.QueueDepth-1) != 0 {
+		return fmt.Errorf("QueueDepth must be a power of 2, got %d", c.QueueDepth)
+	}
+
+	return nil
+}
+
+// Backend represents the storage backend for the ublk device.
+// Implement ReadAt and WriteAt for basic functionality.
+// For advanced operations, also implement Flusher, Discarder, or WriteZeroer.
 type Backend interface {
 	// ReadAt reads len(p) bytes from offset off
 	ReadAt(p []byte, off int64) (n int, err error)
@@ -89,26 +136,37 @@ type Backend interface {
 	WriteAt(p []byte, off int64) (n int, err error)
 }
 
-// CreateDevice creates and starts a ublk device with the given backend
+// Flusher is an optional interface for backends that support flushing.
+type Flusher interface {
+	// Flush ensures all written data is persisted to stable storage.
+	Flush() error
+}
+
+// Discarder is an optional interface for backends that support discard/trim.
+type Discarder interface {
+	// Discard indicates that the data in the given range is no longer needed.
+	// The backend may deallocate or zero this region.
+	Discard(offset, length int64) error
+}
+
+// WriteZeroer is an optional interface for backends that can efficiently write zeroes.
+type WriteZeroer interface {
+	// WriteZeroes writes zeroes to the given range.
+	// This may be more efficient than writing a buffer of zeroes.
+	WriteZeroes(offset, length int64) error
+}
+
+// CreateDevice creates and starts a ublk device with the given backend.
+// The backend's extended interfaces (Flusher, Discarder, WriteZeroer) will be
+// used automatically if implemented.
 func CreateDevice(backend Backend, config Config) (*Device, error) {
-	if config.BlockSize == 0 {
-		config.BlockSize = 512
-	}
-	if config.Size == 0 {
-		config.Size = 1024 * 1024 * 1024 // 1GB default
-	}
-	if config.MaxSectors == 0 {
-		config.MaxSectors = 256
-	}
-	if config.NrHWQueues == 0 {
-		config.NrHWQueues = 1
-	}
-	if config.QueueDepth == 0 {
-		config.QueueDepth = 128
+	// Validate and apply defaults
+	if err := config.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Create device with backend functions
-	dev, err := NewDevice(backend.ReadAt, backend.WriteAt)
+	// Create device with backend
+	dev, err := NewDeviceWithBackend(backend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device: %w", err)
 	}

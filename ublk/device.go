@@ -30,6 +30,10 @@ type Device struct {
 	params    UblkParams
 	info      UblksrvCtrlDevInfo
 	started   bool
+	stopped   bool // prevents double-close of stopCh
+
+	// Backend reference for extended operations (Flush, Discard, etc.)
+	backend Backend
 
 	// IO handlers (immutable after creation)
 	readAt  func([]byte, int64) (int, error)
@@ -43,6 +47,7 @@ type Device struct {
 
 // NewDevice creates a new ublk device instance.
 // It opens the control device but does not create the ublk device yet.
+// Deprecated: Use NewDeviceWithBackend for full functionality including Flush/Discard.
 func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int64) (int, error)) (*Device, error) {
 	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
 	if err != nil {
@@ -53,6 +58,23 @@ func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int
 		controlFD: controlFD,
 		readAt:    readAt,
 		writeAt:   writeAt,
+		stopCh:    make(chan struct{}),
+	}, nil
+}
+
+// NewDeviceWithBackend creates a new ublk device instance with a Backend.
+// This allows support for extended operations like Flush and Discard.
+func NewDeviceWithBackend(backend Backend) (*Device, error) {
+	controlFD, err := os.OpenFile("/dev/ublk-control", os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open control device: %w", err)
+	}
+
+	return &Device{
+		controlFD: controlFD,
+		backend:   backend,
+		readAt:    backend.ReadAt,
+		writeAt:   backend.WriteAt,
 		stopCh:    make(chan struct{}),
 	}, nil
 }
@@ -159,7 +181,7 @@ func (d *Device) Stop() error {
 
 // stopLocked performs the actual stop logic. Caller must hold d.mu.
 func (d *Device) stopLocked() error {
-	if !d.started {
+	if !d.started || d.stopped {
 		return nil
 	}
 
@@ -169,14 +191,18 @@ func (d *Device) stopLocked() error {
 		logf("Warning: UBLK_CMD_STOP_DEV failed: %v", err)
 	}
 
-	// 2. Signal workers to stop (cleanup)
-	close(d.stopCh)
+	// 2. Signal workers to stop (only once)
+	if !d.stopped {
+		close(d.stopCh)
+		d.stopped = true
+	}
 
 	// 3. Wait for workers to exit
 	d.wg.Wait()
 
 	// Reset for potential restart
 	d.stopCh = make(chan struct{})
+	d.stopped = false
 	d.workers = nil
 	d.started = false
 

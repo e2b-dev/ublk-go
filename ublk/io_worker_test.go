@@ -22,8 +22,8 @@ func TestNewIOWorker(t *testing.T) {
 	if worker.queueDepth != 128 {
 		t.Errorf("expected queueDepth 128, got %d", worker.queueDepth)
 	}
-	if len(worker.ioDescs) != 128 {
-		t.Errorf("expected ioDescs length 128, got %d", len(worker.ioDescs))
+	if len(worker.tagSubmitted) != 128 {
+		t.Errorf("expected tagSubmitted length 128, got %d", len(worker.tagSubmitted))
 	}
 }
 

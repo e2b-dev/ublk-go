@@ -348,3 +348,163 @@ func TestConfigDefaults(t *testing.T) {
 	// The config struct is passed by value, so modifications inside CreateDevice
 	// don't affect our copy. This is fine - defaults are applied internally.
 }
+
+// TestConfigValidate tests the Config.validate() method directly
+func TestConfigValidate(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    Config
+		expectErr bool
+	}{
+		{
+			name:      "valid default config",
+			config:    DefaultConfig(),
+			expectErr: false,
+		},
+		{
+			name:      "valid with defaults applied",
+			config:    Config{}, // All zeros, validate applies defaults
+			expectErr: false,
+		},
+		{
+			name: "invalid block size not power of 2",
+			config: Config{
+				BlockSize:  513,
+				Size:       1024 * 1024,
+				QueueDepth: 128,
+			},
+			expectErr: true,
+		},
+		{
+			name: "invalid block size too small",
+			config: Config{
+				BlockSize:  256,
+				Size:       1024 * 1024,
+				QueueDepth: 128,
+			},
+			expectErr: true,
+		},
+		{
+			name: "invalid size not multiple of block size",
+			config: Config{
+				BlockSize:  512,
+				Size:       1000, // Not multiple of 512
+				QueueDepth: 128,
+			},
+			expectErr: true,
+		},
+		{
+			name: "invalid queue depth not power of 2",
+			config: Config{
+				BlockSize:  512,
+				Size:       1024 * 1024,
+				QueueDepth: 100, // Not power of 2
+			},
+			expectErr: true,
+		},
+		{
+			name: "valid 4K block size",
+			config: Config{
+				BlockSize:  4096,
+				Size:       4096 * 1024,
+				QueueDepth: 64,
+				NrHWQueues: 2,
+			},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.validate()
+			if tt.expectErr && err == nil {
+				t.Error("Expected validation error, got nil")
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("Expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestExtendedBackendInterfaces tests the optional interfaces
+func TestExtendedBackendInterfaces(t *testing.T) {
+	// Test that types implement expected interfaces
+	var _ Backend = (*TestBackend)(nil)
+	var _ Backend = (*ReaderAtWriterAt)(nil)
+
+	// Test that Flusher, Discarder, WriteZeroer are optional
+	var backend Backend = NewTestBackend(1024)
+
+	// These should compile and return false (TestBackend doesn't implement these)
+	_, hasFlusher := backend.(Flusher)
+	_, hasDiscarder := backend.(Discarder)
+	_, hasWriteZeroer := backend.(WriteZeroer)
+
+	if hasFlusher {
+		t.Error("TestBackend should not implement Flusher")
+	}
+	if hasDiscarder {
+		t.Error("TestBackend should not implement Discarder")
+	}
+	if hasWriteZeroer {
+		t.Error("TestBackend should not implement WriteZeroer")
+	}
+}
+
+// ExtendedTestBackend implements all optional interfaces
+type ExtendedTestBackend struct {
+	TestBackend
+	flushed     bool
+	discarded   bool
+	zeroWritten bool
+}
+
+func (b *ExtendedTestBackend) Flush() error {
+	b.flushed = true
+	return nil
+}
+
+func (b *ExtendedTestBackend) Discard(offset, length int64) error {
+	b.discarded = true
+	return nil
+}
+
+func (b *ExtendedTestBackend) WriteZeroes(offset, length int64) error {
+	b.zeroWritten = true
+	return nil
+}
+
+func TestExtendedBackendImplementation(t *testing.T) {
+	backend := &ExtendedTestBackend{
+		TestBackend: *NewTestBackend(1024),
+	}
+
+	// Test that it implements all interfaces
+	var _ Backend = backend
+	var _ Flusher = backend
+	var _ Discarder = backend
+	var _ WriteZeroer = backend
+
+	// Test the methods
+	if err := backend.Flush(); err != nil {
+		t.Errorf("Flush failed: %v", err)
+	}
+	if !backend.flushed {
+		t.Error("Flush was not called")
+	}
+
+	if err := backend.Discard(0, 100); err != nil {
+		t.Errorf("Discard failed: %v", err)
+	}
+	if !backend.discarded {
+		t.Error("Discard was not called")
+	}
+
+	if err := backend.WriteZeroes(0, 100); err != nil {
+		t.Errorf("WriteZeroes failed: %v", err)
+	}
+	if !backend.zeroWritten {
+		t.Error("WriteZeroes was not called")
+	}
+}
