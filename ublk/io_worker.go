@@ -10,9 +10,9 @@ import (
 
 // IO result codes (returned in EndIO field).
 const (
-	IOResultOK      uint16 = 0  // EIO = 0
-	IOResultEIO     uint16 = 5  // EIO
-	IOResultENOTSUP uint16 = 95 // EOPNOTSUPP
+	IOResultOK      uint16 = 0
+	IOResultEIO     uint16 = 5
+	IOResultENOTSUP uint16 = 95
 )
 
 // ioWorker handles IO operations for a specific queue.
