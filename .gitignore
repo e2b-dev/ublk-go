@@ -1,0 +1,45 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/example/example
+/ublk-go
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+*.pprof
+
+# Build artifacts
+/bin/
+/dist/
+/vendor/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Debug
+__debug_bin*
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
