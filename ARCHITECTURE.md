@@ -27,6 +27,7 @@ ublk/
 ├── uring_constants_pure.go  # Pure Go constants (default)
 ├── uring_constants.go       # CGO constants (optional)
 ├── ublk_cmd.go              # ublk command structures
+├── stats.go                 # IO statistics and observability
 └── log.go                   # Configurable logging
 ```
 
@@ -97,7 +98,9 @@ Memory layout of mmap'd area from `/dev/ublkcN`:
 ## Concurrency Model
 
 - 1 io_uring instance per hardware queue
-- 1 goroutine per tag (request slot)
+- 1 goroutine per queue (single issuer pattern)
+- Batched CQE processing (up to 16 completions per submit)
+- Fixed file descriptors registered to reduce per-IO overhead
 - Backend `ReadAt`/`WriteAt` called from worker goroutines
 - **Backend implementations must be thread-safe**
 
@@ -112,7 +115,36 @@ Memory layout of mmap'd area from `/dev/ublkcN`:
 Zero-allocation hot paths verified by benchmarks:
 
 ```
-BenchmarkGetSetIODesc           615M ops    1.9 ns/op   0 allocs
-BenchmarkBufferManagerGetIODescBuffer  585M ops  2.0 ns/op  0 allocs
-BenchmarkParseRequest          1000M ops    0.2 ns/op   0 allocs
+BenchmarkGetSetIODesc           617M ops    2.1 ns/op   0 allocs
+BenchmarkBufferManagerGetIODescBuffer  578M ops  2.0 ns/op  0 allocs
+BenchmarkParseRequest           812M ops    1.4 ns/op   0 allocs
+BenchmarkUblkIOCommandToBytes  1000M ops    1.0 ns/op   0 allocs
 ```
+
+### io_uring Optimizations
+
+| Feature | Kernel | Benefit |
+|---------|--------|---------|
+| `IORING_SETUP_SINGLE_ISSUER` | 6.0+ | Single-thread optimization |
+| `IORING_SETUP_DEFER_TASKRUN` | 6.1+ | Reduced context switches |
+| Fixed file registration | 5.1+ | Avoids per-IO fd lookup |
+| Batched CQE processing | - | Fewer io_uring_enter() calls |
+
+### ublk Features
+
+| Feature | Description |
+|---------|-------------|
+| `UBLK_F_SUPPORT_ZERO_COPY` | Register buffers to avoid copies |
+| `UBLK_F_AUTO_BUF_REG` | Automatic buffer management |
+| `UBLK_F_USER_COPY` | Skip copy for FLUSH/DISCARD |
+| `UBLK_F_USER_RECOVERY` | Survive server restarts |
+
+## Observability
+
+The `Stats` struct provides atomic counters:
+
+- Operation counts: reads, writes, flushes, discards, write_zeroes
+- Byte counts: bytes_read, bytes_written
+- Error counts: read_errors, write_errors, other_errors
+
+Access via `device.Stats().Snapshot()`.
