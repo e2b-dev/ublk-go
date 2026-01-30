@@ -88,9 +88,9 @@ The configuration (`.golangci.yml`) enables:
 - **errorlint**: Error wrapping checks
 - **gocritic**: Opinionated code review suggestions
 
-### Kernel-backed tests (requires root)
+### Integration tests (requires root)
 
-Full device lifecycle tests need root privileges and a kernel with ublk enabled:
+Full device lifecycle and mmap tests need root privileges and a kernel with ublk enabled:
 
 ```bash
 # Load the ublk driver
@@ -99,10 +99,24 @@ sudo modprobe ublk_drv
 # Verify the control device exists
 ls -l /dev/ublk-control
 
-# Run integration test
-sudo -E go test ./ublk -run TestCreateDevice -v
+# Run all integration tests
+sudo -E go test -tags=integration -v ./ublk -run Integration
 
-# Run the example user-space block device
+# Run specific integration tests
+sudo -E go test -tags=integration -v ./ublk -run IntegrationMmap
+sudo -E go test -tags=integration -v ./ublk -run IntegrationDirectIO
+sudo -E go test -tags=integration -v ./ublk -run IntegrationConcurrent
+```
+
+### Mmap example (requires root)
+
+The mmap_test example demonstrates memory-mapping a ublk device:
+
+```bash
+# Run the mmap test example
+sudo go run ./example/mmap_test/
+
+# Run the basic example
 sudo go run ./example/main.go
 ```
 
