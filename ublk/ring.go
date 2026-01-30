@@ -314,6 +314,14 @@ func (r *Ring) SeenCQE(_ *UringCQE) {
 	atomic.AddUint32(r.cq.head, 1)
 }
 
+// CQEReady returns true if there are completions ready to be processed.
+// This is a non-blocking check useful for batch processing.
+func (r *Ring) CQEReady() bool {
+	head := atomic.LoadUint32(r.cq.head)
+	tail := atomic.LoadUint32(r.cq.tail)
+	return head != tail
+}
+
 // Helpers
 
 func roundUpPow2(n uint) uint {

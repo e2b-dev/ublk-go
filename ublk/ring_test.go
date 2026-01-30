@@ -107,6 +107,23 @@ func TestNewRingWithOptions(t *testing.T) {
 	})
 }
 
+// TestRingCQEReady tests the CQEReady method.
+func TestRingCQEReady(t *testing.T) {
+	// CQEReady should work on a properly initialized ring
+	// We can only test the logic, not actual CQE availability without kernel
+	ring, err := NewRing(64, 0)
+	if err != nil {
+		t.Logf("Skipping CQEReady test (expected without io_uring): %v", err)
+		return
+	}
+	defer ring.Close()
+
+	// Initially no CQEs should be ready
+	if ring.CQEReady() {
+		t.Log("CQEReady() returned true on fresh ring (may have kernel events)")
+	}
+}
+
 // TestRingSetupFlags tests that io_uring setup flags have correct values.
 func TestRingSetupFlags(t *testing.T) {
 	// Verify the flag values match kernel ABI

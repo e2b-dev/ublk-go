@@ -42,10 +42,18 @@ type Device struct {
 	// Feature flags
 	flags uint32
 
+	// Statistics
+	stats Stats
+
 	// Worker management
 	workers []*ioWorker
 	wg      sync.WaitGroup
 	stopCh  chan struct{}
+}
+
+// Stats returns the device's IO statistics.
+func (d *Device) Stats() *Stats {
+	return &d.stats
 }
 
 // DeviceOption configures device creation.
