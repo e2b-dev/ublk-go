@@ -16,6 +16,7 @@ func allocateTestMmap(queueDepth uint16, bufferSize int) ([]byte, int) {
 }
 
 func TestBufferManagerGetIODescBuffer(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(4)
 	mmapAddr, bufferOffset := allocateTestMmap(queueDepth, 512)
 	payload := []byte("sample-buffer-data")
@@ -38,6 +39,7 @@ func TestBufferManagerGetIODescBuffer(t *testing.T) {
 }
 
 func TestBufferManagerGetIODescBufferInvalid(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(2)
 	mmapAddr, _ := allocateTestMmap(queueDepth, 64)
 	bm := NewBufferManager(mmapAddr, queueDepth)
@@ -58,6 +60,7 @@ func TestBufferManagerGetIODescBufferInvalid(t *testing.T) {
 }
 
 func TestBufferManagerGetRequestData(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(4)
 	mmapAddr, bufferOffset := allocateTestMmap(queueDepth, 512)
 	_ = bufferOffset
@@ -78,6 +81,7 @@ func TestBufferManagerGetRequestData(t *testing.T) {
 }
 
 func TestBufferManagerGetRequestDataInvalidTag(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(2)
 	mmapAddr, _ := allocateTestMmap(queueDepth, 128)
 	bm := NewBufferManager(mmapAddr, queueDepth)
@@ -88,21 +92,22 @@ func TestBufferManagerGetRequestDataInvalidTag(t *testing.T) {
 }
 
 func TestBufferManagerDescSize(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(4)
 	mmapAddr, _ := allocateTestMmap(queueDepth, 256)
 	bm := NewBufferManager(mmapAddr, queueDepth)
 
-	// Verify descSize is set correctly
 	if bm.descSize == 0 {
 		t.Error("descSize should not be zero")
 	}
 }
 
 func TestBufferManagerGetRequestDataSmallMmap(t *testing.T) {
+	t.Parallel()
 	queueDepth := uint16(4)
 	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
 	// Make mmap too small to hold request data
-	mmapAddr := make([]byte, descSize*int(queueDepth)+100) // Not enough for 256 bytes per request
+	mmapAddr := make([]byte, descSize*int(queueDepth)+100)
 
 	bm := NewBufferManager(mmapAddr, queueDepth)
 

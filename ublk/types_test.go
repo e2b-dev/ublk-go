@@ -5,7 +5,7 @@ import (
 )
 
 func TestIOOperationConstants(t *testing.T) {
-	// Verify IO operation constants are distinct
+	t.Parallel()
 	ops := []uint8{
 		UBLK_IO_OP_READ,
 		UBLK_IO_OP_WRITE,
@@ -24,7 +24,7 @@ func TestIOOperationConstants(t *testing.T) {
 }
 
 func TestIOFlagConstants(t *testing.T) {
-	// Verify flags are distinct bit values
+	t.Parallel()
 	if UBLK_IO_F_FETCHED == 0 {
 		t.Error("UBLK_IO_F_FETCHED should not be zero")
 	}
@@ -37,7 +37,7 @@ func TestIOFlagConstants(t *testing.T) {
 }
 
 func TestCommandConstants(t *testing.T) {
-	// Verify control commands are non-zero
+	t.Parallel()
 	cmds := []uint32{
 		UBLK_CMD_ADD_DEV,
 		UBLK_CMD_DEL_DEV,
@@ -58,7 +58,7 @@ func TestCommandConstants(t *testing.T) {
 }
 
 func TestIOCommandConstants(t *testing.T) {
-	// Verify IO commands are non-zero and distinct
+	t.Parallel()
 	ioCmds := []uint32{
 		UBLK_IO_FETCH_REQ,
 		UBLK_IO_COMMIT_AND_FETCH_REQ,
@@ -78,7 +78,7 @@ func TestIOCommandConstants(t *testing.T) {
 }
 
 func TestDeviceFlagConstants(t *testing.T) {
-	// Verify device flags are distinct power-of-2 values
+	t.Parallel()
 	flags := []uint32{
 		UBLK_F_SUPPORT_ZERO_COPY,
 		UBLK_F_NEED_GET_DATA,
@@ -91,7 +91,6 @@ func TestDeviceFlagConstants(t *testing.T) {
 		if f == 0 {
 			t.Errorf("Device flag %d should not be zero", i)
 		}
-		// Check it's a power of 2
 		if f&(f-1) != 0 {
 			t.Errorf("Device flag %d (0x%x) is not a power of 2", i, f)
 		}
@@ -99,9 +98,9 @@ func TestDeviceFlagConstants(t *testing.T) {
 }
 
 func TestUblkParamsStructure(t *testing.T) {
+	t.Parallel()
 	params := UblkParams{}
 
-	// Test setting basic params
 	params.Basic.LogicalBSize = 512
 	params.Basic.PhysicalBSize = 4096
 	params.Basic.MaxSectors = 256
@@ -111,7 +110,6 @@ func TestUblkParamsStructure(t *testing.T) {
 		t.Error("Failed to set LogicalBSize")
 	}
 
-	// Test IO params
 	params.IO.QueueDepth = 128
 	params.IO.NrHWQueues = 2
 
@@ -121,6 +119,7 @@ func TestUblkParamsStructure(t *testing.T) {
 }
 
 func TestUblksrvIODescStructure(t *testing.T) {
+	t.Parallel()
 	desc := UblksrvIODesc{
 		Addr:    0x1234567890ABCDEF,
 		Length:  4096,

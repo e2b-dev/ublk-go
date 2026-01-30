@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-// TestRingRoundUpPow2 tests the power of 2 rounding function.
 func TestRingRoundUpPow2(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  uint
 		output uint
@@ -34,8 +34,8 @@ func TestRingRoundUpPow2(t *testing.T) {
 	}
 }
 
-// TestNewRingInvalidEntries tests Ring creation with invalid entries.
 func TestNewRingInvalidEntries(t *testing.T) {
+	t.Parallel()
 	// Entries > 4096 should fail (after rounding up)
 	_, err := NewRing(5000, 0)
 	if err == nil {
@@ -46,6 +46,7 @@ func TestNewRingInvalidEntries(t *testing.T) {
 }
 
 // TestNewRingValidEntries tests Ring creation - will fail without kernel but validates API.
+// Not parallelized: interacts with kernel resources.
 func TestNewRingValidEntries(t *testing.T) {
 	// This will fail without io_uring support, but we're testing the API
 	ring, err := NewRing(64, 0)
@@ -62,10 +63,10 @@ func TestNewRingValidEntries(t *testing.T) {
 	}
 }
 
-// TestNewRingWithOptions tests ring creation with performance options.
 func TestNewRingWithOptions(t *testing.T) {
-	// Test that options apply flags correctly
+	t.Parallel()
 	t.Run("SingleIssuer", func(t *testing.T) {
+		t.Parallel()
 		cfg := &ringConfig{}
 		WithSingleIssuer()(cfg)
 		if !cfg.singleIssuer {
@@ -74,6 +75,7 @@ func TestNewRingWithOptions(t *testing.T) {
 	})
 
 	t.Run("DeferTaskrun", func(t *testing.T) {
+		t.Parallel()
 		cfg := &ringConfig{}
 		WithDeferTaskrun()(cfg)
 		if !cfg.deferTaskrun {
@@ -85,6 +87,7 @@ func TestNewRingWithOptions(t *testing.T) {
 	})
 
 	t.Run("CoopTaskrun", func(t *testing.T) {
+		t.Parallel()
 		cfg := &ringConfig{}
 		WithCoopTaskrun()(cfg)
 		if !cfg.coopTaskrun {
@@ -92,7 +95,7 @@ func TestNewRingWithOptions(t *testing.T) {
 		}
 	})
 
-	// Test actual ring creation with options (may fail without kernel support)
+	// Not parallelized: interacts with kernel resources
 	t.Run("CreateWithOptions", func(t *testing.T) {
 		ring, err := NewRingWithOptions(64, 0, WithSingleIssuer())
 		if err != nil {
@@ -108,9 +111,8 @@ func TestNewRingWithOptions(t *testing.T) {
 }
 
 // TestRingCQEReady tests the CQEReady method.
+// Not parallelized: interacts with kernel resources.
 func TestRingCQEReady(t *testing.T) {
-	// CQEReady should work on a properly initialized ring
-	// We can only test the logic, not actual CQE availability without kernel
 	ring, err := NewRing(64, 0)
 	if err != nil {
 		t.Logf("Skipping CQEReady test (expected without io_uring): %v", err)
@@ -124,9 +126,8 @@ func TestRingCQEReady(t *testing.T) {
 	}
 }
 
-// TestRingSetupFlags tests that io_uring setup flags have correct values.
 func TestRingSetupFlags(t *testing.T) {
-	// Verify the flag values match kernel ABI
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value uint
@@ -142,6 +143,7 @@ func TestRingSetupFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if tt.value != tt.want {
 				t.Errorf("%s = %d, want %d", tt.name, tt.value, tt.want)
 			}

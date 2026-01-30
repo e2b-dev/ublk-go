@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewIOWorker(t *testing.T) {
-	// Create a minimal device for testing (won't actually work without kernel)
+	t.Parallel()
 	dev := &Device{
 		devID: 0,
 	}
@@ -28,6 +28,7 @@ func TestNewIOWorker(t *testing.T) {
 }
 
 func TestIOWorkerGetSetIODesc(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 4,
 	}
@@ -35,7 +36,6 @@ func TestIOWorkerGetSetIODesc(t *testing.T) {
 	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
 	worker.mmapAddr = make([]byte, descSize*4)
 
-	// Set a descriptor
 	desc := UblksrvIODesc{
 		Addr:    0x12345678,
 		Length:  4096,
@@ -44,7 +44,6 @@ func TestIOWorkerGetSetIODesc(t *testing.T) {
 	}
 	worker.setIODesc(2, desc)
 
-	// Get it back
 	got := worker.getIODesc(2)
 	if got.Addr != desc.Addr {
 		t.Errorf("expected Addr %x, got %x", desc.Addr, got.Addr)
@@ -61,19 +60,20 @@ func TestIOWorkerGetSetIODesc(t *testing.T) {
 }
 
 func TestIOWorkerGetIODescNilMmap(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 4,
 		mmapAddr:   nil,
 	}
 
-	// Should return empty descriptor without panic
 	desc := worker.getIODesc(0)
 	if desc.Addr != 0 || desc.Length != 0 {
 		t.Error("expected zero descriptor for nil mmap")
 	}
 }
 
-func TestIOWorkerSetIODescNilMmap(_ *testing.T) {
+func TestIOWorkerSetIODescNilMmap(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 4,
 		mmapAddr:   nil,
@@ -84,6 +84,7 @@ func TestIOWorkerSetIODescNilMmap(_ *testing.T) {
 }
 
 func TestIOWorkerGetIODescOutOfBounds(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 2,
 	}
@@ -91,14 +92,14 @@ func TestIOWorkerGetIODescOutOfBounds(t *testing.T) {
 	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
 	worker.mmapAddr = make([]byte, descSize) // Only space for 1 descriptor
 
-	// Tag 1 would be out of bounds
 	desc := worker.getIODesc(1)
 	if desc.Addr != 0 {
 		t.Error("expected zero descriptor for out of bounds tag")
 	}
 }
 
-func TestIOWorkerSetIODescOutOfBounds(_ *testing.T) {
+func TestIOWorkerSetIODescOutOfBounds(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 2,
 	}
@@ -111,7 +112,7 @@ func TestIOWorkerSetIODescOutOfBounds(_ *testing.T) {
 }
 
 func TestIOWorkerMmapSizeCalculation(t *testing.T) {
-	// Test that mmap size calculation is correct
+	t.Parallel()
 	queueDepth := uint16(128)
 	maxIOBufBytes := uint32(512 * 1024)
 
@@ -120,7 +121,6 @@ func TestIOWorkerMmapSizeCalculation(t *testing.T) {
 	requestAreaSize := 256 * int(queueDepth)
 	expectedSize := descAreaSize + requestAreaSize + int(maxIOBufBytes)
 
-	// Verify the calculation matches what io_worker does
 	if expectedSize <= 0 {
 		t.Error("Expected size should be positive")
 	}
@@ -130,6 +130,7 @@ func TestIOWorkerMmapSizeCalculation(t *testing.T) {
 }
 
 func TestIOWorkerQueueAndTag(t *testing.T) {
+	t.Parallel()
 	dev := &Device{devID: 5}
 	worker := newIOWorker(dev, 3, 64)
 
@@ -142,6 +143,7 @@ func TestIOWorkerQueueAndTag(t *testing.T) {
 }
 
 func TestIOWorkerMultipleDescriptors(t *testing.T) {
+	t.Parallel()
 	worker := &ioWorker{
 		queueDepth: 4,
 	}
@@ -149,7 +151,6 @@ func TestIOWorkerMultipleDescriptors(t *testing.T) {
 	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
 	worker.mmapAddr = make([]byte, descSize*4)
 
-	// Set all 4 descriptors
 	for tag := range uint16(4) {
 		desc := UblksrvIODesc{
 			Addr:   uint64(tag * 0x1000),
@@ -159,7 +160,6 @@ func TestIOWorkerMultipleDescriptors(t *testing.T) {
 		worker.setIODesc(tag, desc)
 	}
 
-	// Read them back and verify
 	for tag := range uint16(4) {
 		got := worker.getIODesc(tag)
 		if got.Addr != uint64(tag*0x1000) {

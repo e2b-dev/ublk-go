@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-// TestDeviceErrors tests error definitions.
 func TestDeviceErrors(t *testing.T) {
+	t.Parallel()
 	if ErrDeviceNotStarted == nil {
 		t.Error("ErrDeviceNotStarted should be defined")
 	}
@@ -20,8 +20,8 @@ func TestDeviceErrors(t *testing.T) {
 	}
 }
 
-// TestUblkCommand tests command creation.
 func TestUblkCommand(t *testing.T) {
+	t.Parallel()
 	cmd := NewFetchReqCommand(0, 0, 0)
 	if cmd.Op != UBLK_IO_FETCH_REQ {
 		t.Errorf("Expected op %d, got %d", UBLK_IO_FETCH_REQ, cmd.Op)
@@ -36,8 +36,8 @@ func TestUblkCommand(t *testing.T) {
 	}
 }
 
-// TestUblkIOCommandBytes tests command serialization.
 func TestUblkIOCommandBytes(t *testing.T) {
+	t.Parallel()
 	cmd := NewFetchReqCommand(42, 7, 99)
 
 	// ToBytes should return a valid slice
@@ -61,8 +61,8 @@ func TestUblkIOCommandBytes(t *testing.T) {
 	}
 }
 
-// TestUblkIOCommandSize tests command size.
 func TestUblkIOCommandSize(t *testing.T) {
+	t.Parallel()
 	cmd := NewFetchReqCommand(0, 0, 0)
 	size := cmd.Size()
 	if size == 0 {
@@ -74,8 +74,8 @@ func TestUblkIOCommandSize(t *testing.T) {
 	}
 }
 
-// TestErrInvalidRequest tests the ErrInvalidRequest error.
 func TestErrInvalidRequest(t *testing.T) {
+	t.Parallel()
 	if ErrInvalidRequest == nil {
 		t.Error("ErrInvalidRequest should not be nil")
 	}
@@ -84,9 +84,10 @@ func TestErrInvalidRequest(t *testing.T) {
 	}
 }
 
-// TestDeviceOptions tests the device option functions.
 func TestDeviceOptions(t *testing.T) {
+	t.Parallel()
 	t.Run("WithZeroCopy", func(t *testing.T) {
+		t.Parallel()
 		d := &Device{}
 		WithZeroCopy()(d)
 		if d.flags&UBLK_F_SUPPORT_ZERO_COPY == 0 {
@@ -95,6 +96,7 @@ func TestDeviceOptions(t *testing.T) {
 	})
 
 	t.Run("WithAutoBufReg", func(t *testing.T) {
+		t.Parallel()
 		d := &Device{}
 		WithAutoBufReg()(d)
 		if d.flags&UBLK_F_AUTO_BUF_REG == 0 {
@@ -106,6 +108,7 @@ func TestDeviceOptions(t *testing.T) {
 	})
 
 	t.Run("WithUserRecovery", func(t *testing.T) {
+		t.Parallel()
 		d := &Device{}
 		WithUserRecovery()(d)
 		if d.flags&UBLK_F_USER_RECOVERY == 0 {
@@ -114,6 +117,7 @@ func TestDeviceOptions(t *testing.T) {
 	})
 
 	t.Run("WithUnprivileged", func(t *testing.T) {
+		t.Parallel()
 		d := &Device{}
 		WithUnprivileged()(d)
 		if d.flags&UBLK_F_UNPRIVILEGED_DEV == 0 {
@@ -122,6 +126,7 @@ func TestDeviceOptions(t *testing.T) {
 	})
 
 	t.Run("WithUserCopy", func(t *testing.T) {
+		t.Parallel()
 		d := &Device{}
 		WithUserCopy()(d)
 		if d.flags&UBLK_F_USER_COPY == 0 {
@@ -130,8 +135,8 @@ func TestDeviceOptions(t *testing.T) {
 	})
 }
 
-// TestDeviceFeatureFlags tests the device feature flag constants.
 func TestDeviceFeatureFlags(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value uint32
@@ -147,6 +152,7 @@ func TestDeviceFeatureFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if tt.value != tt.want {
 				t.Errorf("%s = %d, want %d", tt.name, tt.value, tt.want)
 			}
@@ -154,8 +160,8 @@ func TestDeviceFeatureFlags(t *testing.T) {
 	}
 }
 
-// TestDeviceHelpers tests the device helper methods.
 func TestDeviceHelpers(t *testing.T) {
+	t.Parallel()
 	d := &Device{flags: UBLK_F_SUPPORT_ZERO_COPY | UBLK_F_AUTO_BUF_REG | UBLK_F_USER_COPY}
 
 	if !d.HasZeroCopy() {

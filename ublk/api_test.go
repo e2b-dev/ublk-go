@@ -36,7 +36,6 @@ func (b *TestBackend) WriteAt(p []byte, off int64) (n int, err error) {
 	}
 	end := off + int64(len(p))
 	if end > b.size {
-		// Extend if needed
 		if end > int64(cap(b.data)) {
 			newData := make([]byte, end)
 			copy(newData, b.data)
@@ -53,8 +52,9 @@ func (b *TestBackend) GetData() []byte {
 }
 
 // TestCreateDevice tests the CreateDevice function.
+// Not parallelized: interacts with kernel resources.
 func TestCreateDevice(t *testing.T) {
-	backend := NewTestBackend(1024 * 1024) // 1MB
+	backend := NewTestBackend(1024 * 1024)
 
 	config := DefaultConfig()
 	config.Size = 1024 * 1024
@@ -64,20 +64,16 @@ func TestCreateDevice(t *testing.T) {
 
 	dev, err := CreateDevice(backend, config)
 	if err != nil {
-		// This is expected if we don't have root or ublk kernel support
-		// Just verify the function signature and error handling
 		t.Logf("CreateDevice returned error (expected without root/kernel): %v", err)
 		return
 	}
 
-	// Clean up if device was created
 	defer func() {
 		if dev != nil {
 			dev.Delete()
 		}
 	}()
 
-	// Verify device properties
 	if dev.DeviceID() < 0 {
 		t.Error("Device ID should be non-negative")
 	}
@@ -90,8 +86,8 @@ func TestCreateDevice(t *testing.T) {
 	t.Logf("Created device: %s (ID: %d)", blockPath, dev.DeviceID())
 }
 
-// TestDefaultConfig tests the default configuration.
 func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
 	config := DefaultConfig()
 
 	if config.BlockSize == 0 {
@@ -114,15 +110,14 @@ func TestDefaultConfig(t *testing.T) {
 		config.BlockSize, config.Size, config.NrHWQueues, config.QueueDepth)
 }
 
-// TestBackendInterface tests that TestBackend implements Backend.
-func TestBackendInterface(_ *testing.T) {
+func TestBackendInterface(t *testing.T) {
+	t.Parallel()
 	var _ Backend = (*TestBackend)(nil)
 	var _ Backend = (*ReaderAtWriterAt)(nil)
 }
 
-// TestReaderAtWriterAtNilHandling tests nil handling in ReaderAtWriterAt.
 func TestReaderAtWriterAtNilHandling(t *testing.T) {
-	// Test with nil ReaderAt
+	t.Parallel()
 	backend := &ReaderAtWriterAt{
 		ReaderAt: nil,
 		WriterAt: nil,
@@ -134,7 +129,6 @@ func TestReaderAtWriterAtNilHandling(t *testing.T) {
 		t.Error("Expected EOF error for nil ReaderAt")
 	}
 
-	// WriteAt with nil WriterAt should succeed (no-op)
 	n, err := backend.WriteAt([]byte("test"), 0)
 	if err != nil {
 		t.Errorf("WriteAt with nil WriterAt should not error: %v", err)
@@ -144,14 +138,13 @@ func TestReaderAtWriterAtNilHandling(t *testing.T) {
 	}
 }
 
-// TestReaderAtWriterAt tests the ReaderAtWriterAt adapter.
 func TestReaderAtWriterAt(t *testing.T) {
+	t.Parallel()
 	backend := &ReaderAtWriterAt{
 		ReaderAt: &TestBackend{data: []byte("test"), size: 4},
 		WriterAt: &TestBackend{data: make([]byte, 10), size: 10},
 	}
 
-	// Test ReadAt
 	buf := make([]byte, 4)
 	n, err := backend.ReadAt(buf, 0)
 	if err != nil {
@@ -161,7 +154,6 @@ func TestReaderAtWriterAt(t *testing.T) {
 		t.Errorf("Expected to read 4 bytes, got %d", n)
 	}
 
-	// Test WriteAt
 	data := []byte("write")
 	n, err = backend.WriteAt(data, 0)
 	if err != nil {
@@ -173,6 +165,7 @@ func TestReaderAtWriterAt(t *testing.T) {
 }
 
 // TestConfigValidation tests configuration validation.
+// Not parallelized: interacts with kernel resources.
 func TestConfigValidation(t *testing.T) {
 	backend := NewTestBackend(1024)
 
@@ -201,7 +194,7 @@ func TestConfigValidation(t *testing.T) {
 				NrHWQueues: 1,
 				QueueDepth: 128,
 			},
-			valid: true, // Should use default
+			valid: true,
 		},
 		{
 			name: "zero size",
@@ -212,7 +205,7 @@ func TestConfigValidation(t *testing.T) {
 				NrHWQueues: 1,
 				QueueDepth: 128,
 			},
-			valid: true, // Should use default
+			valid: true,
 		},
 	}
 
@@ -220,7 +213,6 @@ func TestConfigValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := CreateDevice(backend, tt.config)
 			if tt.valid {
-				// Error is expected without root/kernel, but should be a specific error
 				if err != nil {
 					t.Logf("Expected error (no root/kernel): %v", err)
 				}
@@ -234,56 +226,49 @@ func TestConfigValidation(t *testing.T) {
 }
 
 // TestDeviceLifecycle tests the device lifecycle (without actually creating).
+// Not parallelized: interacts with kernel resources.
 func TestDeviceLifecycle(t *testing.T) {
 	backend := NewTestBackend(1024)
 
-	// Test that we can create a device object
 	dev, err := NewDevice(backend.ReadAt, backend.WriteAt)
 	if err != nil {
-		// This might fail if /dev/ublk-control doesn't exist
 		t.Logf("NewDevice error (expected without kernel): %v", err)
 		return
 	}
 
-	// Test Add
 	err = dev.Add(1, 64)
 	if err != nil {
 		t.Logf("Add error (expected without root): %v", err)
 		return
 	}
 
-	// Test SetParams
 	err = dev.SetParams(512, 1024*1024, 256)
 	if err != nil {
 		t.Logf("SetParams error: %v", err)
 		return
 	}
 
-	// Test Start
 	err = dev.Start()
 	if err != nil {
 		t.Logf("Start error (expected without root): %v", err)
 		return
 	}
 
-	// Test Stop
 	err = dev.Stop()
 	if err != nil {
 		t.Logf("Stop error: %v", err)
 	}
 
-	// Test Delete
 	err = dev.Delete()
 	if err != nil {
 		t.Logf("Delete error: %v", err)
 	}
 }
 
-// TestBackendOperations tests backend read/write operations.
 func TestBackendOperations(t *testing.T) {
+	t.Parallel()
 	backend := NewTestBackend(1024)
 
-	// Test write
 	data := []byte("Hello, ublk!")
 	n, err := backend.WriteAt(data, 0)
 	if err != nil {
@@ -293,7 +278,6 @@ func TestBackendOperations(t *testing.T) {
 		t.Errorf("Expected to write %d bytes, got %d", len(data), n)
 	}
 
-	// Test read
 	buf := make([]byte, len(data))
 	n, err = backend.ReadAt(buf, 0)
 	if err != nil {
@@ -306,7 +290,6 @@ func TestBackendOperations(t *testing.T) {
 		t.Error("Read data doesn't match written data")
 	}
 
-	// Test read beyond size
 	_, err = backend.ReadAt(make([]byte, 10), 2000)
 	if err == nil {
 		t.Error("Expected error when reading beyond size")
@@ -314,16 +297,14 @@ func TestBackendOperations(t *testing.T) {
 }
 
 // TestConfigDefaults tests that CreateDevice applies defaults.
+// Not parallelized: interacts with kernel resources.
 func TestConfigDefaults(t *testing.T) {
 	backend := NewTestBackend(1024)
 
-	// Test with minimal config - CreateDevice applies defaults internally
 	config := Config{
 		Size: 1024 * 1024,
 	}
 
-	// CreateDevice applies defaults internally, but we can't verify them
-	// if the call fails early. Instead, test that DefaultConfig works.
 	defaultConfig := DefaultConfig()
 	if defaultConfig.BlockSize == 0 {
 		t.Error("Default block size should not be zero")
@@ -335,19 +316,14 @@ func TestConfigDefaults(t *testing.T) {
 		t.Error("Default queue depth should not be zero")
 	}
 
-	// Test that CreateDevice handles zero values
 	_, err := CreateDevice(backend, config)
-	// Error is expected without root/kernel
 	if err != nil {
 		t.Logf("CreateDevice error (expected): %v", err)
 	}
-
-	// The config struct is passed by value, so modifications inside CreateDevice
-	// don't affect our copy. This is fine - defaults are applied internally.
 }
 
-// TestConfigValidate tests the Config.validate() method directly.
 func TestConfigValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		config    Config
@@ -360,7 +336,7 @@ func TestConfigValidate(t *testing.T) {
 		},
 		{
 			name:      "valid with defaults applied",
-			config:    Config{}, // All zeros, validate applies defaults
+			config:    Config{},
 			expectErr: false,
 		},
 		{
@@ -385,7 +361,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "invalid size not multiple of block size",
 			config: Config{
 				BlockSize:  512,
-				Size:       1000, // Not multiple of 512
+				Size:       1000,
 				QueueDepth: 128,
 			},
 			expectErr: true,
@@ -395,7 +371,7 @@ func TestConfigValidate(t *testing.T) {
 			config: Config{
 				BlockSize:  512,
 				Size:       1024 * 1024,
-				QueueDepth: 100, // Not power of 2
+				QueueDepth: 100,
 			},
 			expectErr: true,
 		},
@@ -413,6 +389,7 @@ func TestConfigValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.config.validate()
 			if tt.expectErr && err == nil {
 				t.Error("Expected validation error, got nil")
@@ -424,16 +401,13 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-// TestExtendedBackendInterfaces tests the optional interfaces.
 func TestExtendedBackendInterfaces(t *testing.T) {
-	// Test that types implement expected interfaces
+	t.Parallel()
 	var _ Backend = (*TestBackend)(nil)
 	var _ Backend = (*ReaderAtWriterAt)(nil)
 
-	// Test that Flusher, Discarder, WriteZeroer are optional
 	var backend Backend = NewTestBackend(1024)
 
-	// These should compile and return false (TestBackend doesn't implement these)
 	_, hasFlusher := backend.(Flusher)
 	_, hasDiscarder := backend.(Discarder)
 	_, hasWriteZeroer := backend.(WriteZeroer)
@@ -474,17 +448,16 @@ func (b *ExtendedTestBackend) WriteZeroes(_, _ int64) error {
 }
 
 func TestExtendedBackendImplementation(t *testing.T) {
+	t.Parallel()
 	backend := &ExtendedTestBackend{
 		TestBackend: *NewTestBackend(1024),
 	}
 
-	// Test that it implements all interfaces
 	var _ Backend = backend
 	var _ Flusher = backend
 	var _ Discarder = backend
 	var _ WriteZeroer = backend
 
-	// Test the methods
 	if err := backend.Flush(); err != nil {
 		t.Errorf("Flush failed: %v", err)
 	}

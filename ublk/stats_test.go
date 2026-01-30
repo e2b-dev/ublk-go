@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestStatsRecordOp tests the recordOp function.
 func TestStatsRecordOp(t *testing.T) {
+	t.Parallel()
 	s := &Stats{}
 
 	// Test successful read
@@ -55,8 +55,8 @@ func TestStatsRecordOp(t *testing.T) {
 	}
 }
 
-// TestStatsSnapshot tests the Snapshot function.
 func TestStatsSnapshot(t *testing.T) {
+	t.Parallel()
 	s := &Stats{}
 	s.Reads.Store(100)
 	s.Writes.Store(50)
@@ -72,8 +72,8 @@ func TestStatsSnapshot(t *testing.T) {
 	}
 }
 
-// TestStatsReset tests the Reset function.
 func TestStatsReset(t *testing.T) {
+	t.Parallel()
 	s := &Stats{}
 	s.Reads.Store(100)
 	s.Writes.Store(50)
@@ -92,8 +92,8 @@ func TestStatsReset(t *testing.T) {
 	}
 }
 
-// TestIOResultCodes tests the IO result code constants.
 func TestIOResultCodes(t *testing.T) {
+	t.Parallel()
 	if IOResultOK != 0 {
 		t.Errorf("IOResultOK should be 0, got %d", IOResultOK)
 	}
@@ -105,8 +105,8 @@ func TestIOResultCodes(t *testing.T) {
 	}
 }
 
-// TestStatsConcurrent stress tests Stats under concurrent access.
 func TestStatsConcurrent(t *testing.T) {
+	t.Parallel()
 	s := &Stats{}
 	const goroutines = 100
 	const opsPerGoroutine = 1000
