@@ -47,7 +47,7 @@ linters:
 
     # These require more work to enable
     - err113          # Requires defining error types
-    - godoclint       # Strict doc comments
+    - godoclint       # Strict doc comment formatting
 
     # Deprecated
     - wsl
