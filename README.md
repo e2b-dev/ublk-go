@@ -158,7 +158,8 @@ See [BUILD.md](BUILD.md) for build instructions and [ARCHITECTURE.md](ARCHITECTU
 
 - `example/main.go` - Basic in-memory backend
 - `example/zerocopy/` - Zero-copy backend using memfd
-- `example/cow_overlay/` - Copy-on-write overlay with shared base image
+- `example/cow_overlay/` - Simple copy-on-write overlay
+- `example/cow_zerocopy/` - Advanced COW with bitmap routing and diff extraction
 - `example/mmap_test/` - Memory-mapped device testing
 
 ## References
