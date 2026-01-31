@@ -407,6 +407,11 @@ const (
 	IORING_REGISTER_FILES        = 2
 	IORING_UNREGISTER_FILES      = 3
 	IORING_REGISTER_FILES_UPDATE = 6
+	IORING_REGISTER_BUFFERS2     = 15
+)
+
+const (
+	IORING_RSRC_REGISTER_SPARSE = 1 << 0
 )
 
 // RegisterFiles registers file descriptors for use with IOSQE_FIXED_FILE.
@@ -437,6 +442,41 @@ func (r *Ring) RegisterFiles(fds []int) error {
 
 	r.fixedFiles = files
 	r.hasFixedFiles = true
+	return nil
+}
+
+type ioUringBufReg struct {
+	RingAddr    uint64
+	RingEntries uint32
+	Bgid        uint16
+	Flags       uint16
+	Resv        [3]uint64
+}
+
+// RegisterSparseBuffers creates a sparse fixed-buffer table for this ring.
+// Entries is the number of buffer slots to reserve.
+func (r *Ring) RegisterSparseBuffers(entries uint32) error {
+	if entries == 0 {
+		return errors.New("entries must be > 0")
+	}
+
+	reg := ioUringBufReg{
+		RingEntries: entries,
+		Bgid:        0,
+		Flags:       IORING_RSRC_REGISTER_SPARSE,
+	}
+
+	_, _, errno := syscall.Syscall6(
+		unix.SYS_IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_REGISTER_BUFFERS2,
+		uintptr(unsafe.Pointer(&reg)),
+		1,
+		0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("io_uring_register buffers2 failed: %w", errno)
+	}
 	return nil
 }
 

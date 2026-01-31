@@ -11,6 +11,7 @@ This library allows you to create block devices in userspace by implementing sim
 - Linux kernel 6.0+ with ublk driver enabled (6.1+ for best performance)
 - Go 1.25+
 - Root privileges (for creating block devices)
+- liburing development headers (via pkg-config) and CGO-enabled Go toolchain
 
 ## Installation
 
@@ -86,16 +87,23 @@ type Config struct {
     BlockSize    uint64  // Logical block size (typically 512 or 4096)
     Size         uint64  // Total device size in bytes
     MaxSectors   uint32  // Maximum sectors per request
+    MaxIOBufBytes uint32 // Maximum IO buffer size per request (bytes)
     NrHWQueues   uint16  // Number of hardware queues
     QueueDepth   uint16  // Depth of each queue
     
     // Advanced features (kernel 6.x+)
-    ZeroCopy     bool    // Enable zero-copy mode
-    AutoBufReg   bool    // Automatic buffer registration
-    UserRecovery bool    // Survive server restarts
-    Unprivileged bool    // Container-aware mode
+    ZeroCopy     bool    // Enable zero-copy mode (requires FixedFileBackend)
+    AutoBufReg   bool    // Automatic buffer registration (requires kernel support)
+    UserCopy     bool    // Use pread/pwrite path for data transfer
+    MaxDiscardSectors uint32 // Max sectors per discard request
+    MaxDiscardSegments uint32 // Max segments per discard request
 }
 ```
+
+Notes:
+- `ZeroCopy` requires a backend that implements `FixedFileBackend`. It registers request buffers into an
+  io_uring fixed-buffer table and uses `IORING_OP_{READ,WRITE}_FIXED` for data transfer.
+- `AutoBufReg` is the preferred zero-copy mode when supported by the kernel.
 
 ### Optional Backend Interfaces
 
@@ -116,6 +124,12 @@ type Discarder interface {
 type WriteZeroer interface {
     WriteZeroes(offset, length int64) error
 }
+
+// FixedFileBackend enables zero-copy IO using io_uring fixed buffers.
+// Required when Config.ZeroCopy is enabled.
+type FixedFileBackend interface {
+    FixedFile() (*os.File, error)
+}
 ```
 
 ### Device Methods
@@ -131,7 +145,7 @@ See `example/main.go` for a complete example with an in-memory backend.
 
 ## Status
 
-**100% pure Go** - no CGO or C dependencies required.
+Go implementation with CGO-backed io_uring constants (liburing headers).
 
 See `BUILD.md` for build instructions and `ARCHITECTURE.md` for design details.
 

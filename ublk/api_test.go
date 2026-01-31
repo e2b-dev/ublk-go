@@ -105,9 +105,12 @@ func TestDefaultConfig(t *testing.T) {
 	if config.MaxSectors == 0 {
 		t.Error("Default max sectors should not be zero")
 	}
+	if config.MaxIOBufBytes == 0 {
+		t.Error("Default MaxIOBufBytes should not be zero")
+	}
 
-	t.Logf("Default config: BlockSize=%d, Size=%d, Queues=%d, Depth=%d",
-		config.BlockSize, config.Size, config.NrHWQueues, config.QueueDepth)
+	t.Logf("Default config: BlockSize=%d, Size=%d, Queues=%d, Depth=%d, MaxIOBufBytes=%d",
+		config.BlockSize, config.Size, config.NrHWQueues, config.QueueDepth, config.MaxIOBufBytes)
 }
 
 func TestBackendInterface(t *testing.T) {
@@ -242,7 +245,7 @@ func TestDeviceLifecycle(t *testing.T) {
 		return
 	}
 
-	err = dev.SetParams(512, 1024*1024, 256)
+	err = dev.SetParams(512, 1024*1024, 256, 0, 0)
 	if err != nil {
 		t.Logf("SetParams error: %v", err)
 		return
@@ -430,6 +433,9 @@ type ExtendedTestBackend struct {
 	flushed     bool
 	discarded   bool
 	zeroWritten bool
+	fuaWritten  bool
+	readFlags   uint32
+	writeFlags  uint32
 }
 
 func (b *ExtendedTestBackend) Flush() error {
@@ -447,6 +453,21 @@ func (b *ExtendedTestBackend) WriteZeroes(_, _ int64) error {
 	return nil
 }
 
+func (b *ExtendedTestBackend) WriteFua(p []byte, off int64) (int, error) {
+	b.fuaWritten = true
+	return b.WriteAt(p, off)
+}
+
+func (b *ExtendedTestBackend) ReadAtWithFlags(p []byte, off int64, flags uint32) (int, error) {
+	b.readFlags = flags
+	return b.ReadAt(p, off)
+}
+
+func (b *ExtendedTestBackend) WriteAtWithFlags(p []byte, off int64, flags uint32) (int, error) {
+	b.writeFlags = flags
+	return b.WriteAt(p, off)
+}
+
 func TestExtendedBackendImplementation(t *testing.T) {
 	t.Parallel()
 	backend := &ExtendedTestBackend{
@@ -457,6 +478,9 @@ func TestExtendedBackendImplementation(t *testing.T) {
 	var _ Flusher = backend
 	var _ Discarder = backend
 	var _ WriteZeroer = backend
+	var _ FuaWriter = backend
+	var _ ReaderWithFlags = backend
+	var _ WriterWithFlags = backend
 
 	if err := backend.Flush(); err != nil {
 		t.Errorf("Flush failed: %v", err)
@@ -477,5 +501,33 @@ func TestExtendedBackendImplementation(t *testing.T) {
 	}
 	if !backend.zeroWritten {
 		t.Error("WriteZeroes was not called")
+	}
+
+	n, err := backend.WriteFua([]byte("test"), 0)
+	if err != nil {
+		t.Errorf("WriteFua failed: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("WriteFua returned short write: %d", n)
+	}
+	if !backend.fuaWritten {
+		t.Error("WriteFua was not called")
+	}
+
+	// Test Flags
+	_, err = backend.ReadAtWithFlags(make([]byte, 10), 0, 123)
+	if err != nil {
+		t.Errorf("ReadAtWithFlags failed: %v", err)
+	}
+	if backend.readFlags != 123 {
+		t.Errorf("Read flags mismatch: expected 123, got %d", backend.readFlags)
+	}
+
+	_, err = backend.WriteAtWithFlags([]byte("test"), 0, 456)
+	if err != nil {
+		t.Errorf("WriteAtWithFlags failed: %v", err)
+	}
+	if backend.writeFlags != 456 {
+		t.Errorf("Write flags mismatch: expected 456, got %d", backend.writeFlags)
 	}
 }

@@ -23,17 +23,17 @@ func TestDeviceErrors(t *testing.T) {
 
 func TestUblkCommand(t *testing.T) {
 	t.Parallel()
-	cmd, op := NewFetchReqCommand(0, 0)
-	if op != UBLK_IO_FETCH_REQ {
-		t.Errorf("Expected op %d, got %d", UBLK_IO_FETCH_REQ, op)
+	cmd, op := NewFetchReqCommand(0, 0, 0)
+	if op != uint32(UBLK_U_IO_FETCH_REQ) {
+		t.Errorf("Expected op %d, got %d", UBLK_U_IO_FETCH_REQ, op)
 	}
 	if cmd.QID != 0 || cmd.Tag != 0 {
 		t.Error("Command fields not set correctly")
 	}
 
-	cmd2, op2 := NewCommitAndFetchReqCommand(2, 3, 0)
-	if op2 != UBLK_IO_COMMIT_AND_FETCH_REQ {
-		t.Errorf("Expected op %d, got %d", UBLK_IO_COMMIT_AND_FETCH_REQ, op2)
+	cmd2, op2 := NewCommitAndFetchReqCommand(2, 3, 0, 0)
+	if op2 != uint32(UBLK_U_IO_COMMIT_AND_FETCH_REQ) {
+		t.Errorf("Expected op %d, got %d", UBLK_U_IO_COMMIT_AND_FETCH_REQ, op2)
 	}
 	if cmd2.QID != 2 || cmd2.Tag != 3 {
 		t.Error("Command fields not set correctly")
@@ -42,7 +42,7 @@ func TestUblkCommand(t *testing.T) {
 
 func TestUblkIOCommandBytes(t *testing.T) {
 	t.Parallel()
-	cmd, _ := NewFetchReqCommand(7, 99)
+	cmd, _ := NewFetchReqCommand(7, 99, 0)
 
 	// ToBytes should return a valid slice
 	data := cmd.ToBytes()
@@ -67,11 +67,11 @@ func TestUblkIOCommandBytes(t *testing.T) {
 
 func TestUblkIOCommandSize(t *testing.T) {
 	t.Parallel()
-	cmd, _ := NewFetchReqCommand(0, 0)
+	cmd, _ := NewFetchReqCommand(0, 0, 0)
 	size := cmd.Size()
 
-	// ublksrv_io_cmd is 24 bytes (2+2+4(pad)+8+8)
-	const expectedSize = 24
+	// ublksrv_io_cmd is 16 bytes (2+2+4+8)
+	const expectedSize = 16
 
 	if size != expectedSize {
 		t.Errorf("Size should be %d, got %d", expectedSize, size)
@@ -115,24 +115,6 @@ func TestDeviceOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithUserRecovery", func(t *testing.T) {
-		t.Parallel()
-		d := &Device{}
-		WithUserRecovery()(d)
-		if d.flags&UBLK_F_USER_RECOVERY == 0 {
-			t.Error("WithUserRecovery should set UBLK_F_USER_RECOVERY")
-		}
-	})
-
-	t.Run("WithUnprivileged", func(t *testing.T) {
-		t.Parallel()
-		d := &Device{}
-		WithUnprivileged()(d)
-		if d.flags&UBLK_F_UNPRIVILEGED_DEV == 0 {
-			t.Error("WithUnprivileged should set UBLK_F_UNPRIVILEGED_DEV")
-		}
-	})
-
 	t.Run("WithUserCopy", func(t *testing.T) {
 		t.Parallel()
 		d := &Device{}
@@ -152,17 +134,9 @@ func TestDeviceFeatureFlags(t *testing.T) {
 		want  uint64
 	}{
 		{"UBLK_F_SUPPORT_ZERO_COPY", UBLK_F_SUPPORT_ZERO_COPY, 1 << 0},
-		{"UBLK_F_URING_CMD_COMP_IN_TASK", UBLK_F_URING_CMD_COMP_IN_TASK, 1 << 1},
-		{"UBLK_F_NEED_GET_DATA", UBLK_F_NEED_GET_DATA, 1 << 2},
-		{"UBLK_F_USER_RECOVERY", UBLK_F_USER_RECOVERY, 1 << 3},
-		{"UBLK_F_USER_RECOVERY_REISSUE", UBLK_F_USER_RECOVERY_REISSUE, 1 << 4},
-		{"UBLK_F_UNPRIVILEGED_DEV", UBLK_F_UNPRIVILEGED_DEV, 1 << 5},
 		{"UBLK_F_CMD_IOCTL_ENCODE", UBLK_F_CMD_IOCTL_ENCODE, 1 << 6},
 		{"UBLK_F_USER_COPY", UBLK_F_USER_COPY, 1 << 7},
-		{"UBLK_F_ZONED", UBLK_F_ZONED, 1 << 8},
-		{"UBLK_F_USER_RECOVERY_FAIL_IO", UBLK_F_USER_RECOVERY_FAIL_IO, 1 << 9},
 		{"UBLK_F_AUTO_BUF_REG", UBLK_F_AUTO_BUF_REG, 1 << 11},
-		{"UBLK_F_PER_IO_DAEMON", UBLK_F_PER_IO_DAEMON, 1 << 13},
 	}
 
 	for _, tt := range tests {
@@ -182,7 +156,6 @@ func TestDeviceHelpers(t *testing.T) {
 	if !d.HasZeroCopy() {
 		t.Error("HasZeroCopy() should return true")
 	}
-
 	if !d.HasAutoBufReg() {
 		t.Error("HasAutoBufReg() should return true")
 	}
@@ -194,6 +167,9 @@ func TestDeviceHelpers(t *testing.T) {
 	d2 := &Device{}
 	if d2.HasZeroCopy() {
 		t.Error("HasZeroCopy() should return false for default device")
+	}
+	if d2.HasAutoBufReg() {
+		t.Error("HasAutoBufReg() should return false for default device")
 	}
 	if d2.HasUserCopy() {
 		t.Error("HasUserCopy() should return false for default device")
@@ -230,8 +206,8 @@ func TestNewDevice(t *testing.T) {
 	defer func() { controlDevicePath = origPath }()
 
 	d, err := NewDevice(
-		func(p []byte, off int64) (int, error) { return 0, nil },
-		func(p []byte, off int64) (int, error) { return 0, nil },
+		func(_ []byte, _ int64) (int, error) { return 0, nil },
+		func(_ []byte, _ int64) (int, error) { return 0, nil },
 	)
 	if err != nil {
 		t.Fatalf("NewDevice failed: %v", err)

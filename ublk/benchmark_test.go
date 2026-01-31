@@ -17,7 +17,7 @@ func BenchmarkGetSetIODesc(b *testing.B) {
 		// Updated to match new struct fields
 		StartSector: 0,
 		NrSectors:   8,
-		OpFlags:     UBLK_IO_F_FETCHED,
+		OpFlags:     UBLK_IO_F_FUA,
 	}
 
 	b.ResetTimer()
@@ -29,7 +29,7 @@ func BenchmarkGetSetIODesc(b *testing.B) {
 }
 
 func BenchmarkUblkIOCommandToBytes(b *testing.B) {
-	cmd, _ := NewFetchReqCommand(1, 1) // qid=1, tag=1
+	cmd, _ := NewFetchReqCommand(1, 1, 0) // qid=1, tag=1
 	b.ResetTimer()
 	for b.Loop() {
 		_ = cmd.ToBytes()

@@ -17,7 +17,7 @@ When applications mmap a ublk block device (e.g., `/dev/ublkb0`), the Linux kern
 ```go
 config := ublk.DefaultConfig()
 // MaxSectors: 256 (128KB with 512-byte sectors)
-// MaxIOBufBytes: 512KB (hardcoded in device.go)
+// MaxIOBufBytes: 512KB (default)
 ```
 
 This means even with THP allocating 2MB pages, I/O to your backend happens in 128KB chunks.
@@ -34,19 +34,11 @@ config.BlockSize = 4096    // 4KB blocks (recommended for THP)
 config.MaxSectors = 512    // 512 * 4096 = 2MB max I/O
 ```
 
-#### Step 2: Increase MaxIOBufBytes (requires code change)
-
-The `MaxIOBufBytes` in `device.go` must also be increased:
+#### Step 2: Increase MaxIOBufBytes
 
 ```go
-// In device.go, Add() function:
-info := UblksrvCtrlDevInfo{
-    MaxIOBufBytes: 2 * 1024 * 1024, // 2MB instead of 512KB
-    // ...
-}
+config.MaxIOBufBytes = 2 * 1024 * 1024 // 2MB instead of 512KB
 ```
-
-To make this configurable, add `MaxIOBufBytes` to the `Config` struct in `api.go`.
 
 #### Step 3: Adjust Queue Depth for Memory
 
@@ -141,8 +133,8 @@ For high-throughput workloads, enable zero-copy to avoid buffer copies:
 
 ```go
 config.ZeroCopy = true    // Manual buffer registration
-// or
-config.AutoBufReg = true  // Automatic (kernel 6.x+, simpler)
+// or (preferred when supported by the kernel)
+config.AutoBufReg = true
 ```
 
 Zero-copy registers I/O buffers with io_uring, eliminating copies between kernel and userspace.
@@ -185,6 +177,7 @@ config.QueueDepth = 128
 config := ublk.DefaultConfig()
 config.BlockSize = 4096
 config.MaxSectors = 512   // 2MB max I/O (requires MaxIOBufBytes increase)
+config.MaxIOBufBytes = 2 * 1024 * 1024
 config.NrHWQueues = 2
 config.QueueDepth = 32    // Reduced for memory
 ```

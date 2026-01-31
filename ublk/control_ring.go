@@ -15,10 +15,6 @@ type controlRing struct {
 	mu   sync.Mutex
 }
 
-const (
-	ioringOpUringCmd = 80 // IORING_OP_URING_CMD
-)
-
 func newControlRing(entries uint32) (*controlRing, error) {
 	// Initialize ring with SQE128 support
 	ring, err := NewRingWithOptions(uint(entries), 0, WithSQE128())
@@ -42,9 +38,10 @@ func (r *controlRing) submitCmd(ctrlFd int, cmdOp uint32, cmd *UblksrvCtrlCmd) (
 		return 0, fmt.Errorf("GetSQE128 failed: %w", err)
 	}
 
-	sqe.Opcode = ioringOpUringCmd
+	sqe.Opcode = IORING_OP_URING_CMD
 	sqe.Fd = int32(ctrlFd)
 	sqe.Off = uint64(cmdOp) // cmd_op is in lower 32 bits of off field
+	sqe.Len = uint32(unsafe.Sizeof(*cmd))
 
 	// Copy command data to the extended area
 	cmdBytes := (*[unsafe.Sizeof(UblksrvCtrlCmd{})]byte)(unsafe.Pointer(cmd))[:]

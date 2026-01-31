@@ -3,6 +3,8 @@ package ublk
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math/bits"
 	"os"
 	"sync"
 	"unsafe"
@@ -33,8 +35,12 @@ type Device struct {
 	charDevFD *os.File // /dev/ublkc*
 	params    UblkParams
 	info      UblksrvCtrlDevInfo
+	added     bool
 	started   bool
 	stopped   bool // prevents double-close of stopCh
+
+	// Configurable I/O buffer size per request
+	maxIOBufBytes uint32
 
 	// Backend reference for extended operations (Flush, Discard, etc.)
 	backend Backend
@@ -72,27 +78,11 @@ func WithZeroCopy() DeviceOption {
 	}
 }
 
-// WithAutoBufReg enables automatic buffer registration (kernel 6.x+).
-// This simplifies zero-copy by automatically registering and unregistering
-// buffers, eliminating manual REGISTER_IO_BUF/UNREGISTER_IO_BUF commands.
+// WithAutoBufReg enables automatic buffer registration (requires kernel support).
+// This simplifies zero-copy by having the kernel manage buffer registration.
 func WithAutoBufReg() DeviceOption {
 	return func(d *Device) {
 		d.flags |= UBLK_F_AUTO_BUF_REG | UBLK_F_SUPPORT_ZERO_COPY
-	}
-}
-
-// WithUserRecovery enables user-space recovery on ublk server crash.
-// The device survives server restarts without losing the block device.
-func WithUserRecovery() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_USER_RECOVERY
-	}
-}
-
-// WithUnprivileged enables unprivileged device control (container-aware).
-func WithUnprivileged() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_UNPRIVILEGED_DEV
 	}
 }
 
@@ -112,6 +102,13 @@ func WithUserCopy() DeviceOption {
 	}
 }
 
+// WithMaxIOBufBytes sets the maximum IO buffer size (per request) in bytes.
+func WithMaxIOBufBytes(size uint32) DeviceOption {
+	return func(d *Device) {
+		d.maxIOBufBytes = size
+	}
+}
+
 // NewDevice creates a new ublk device instance.
 // It opens the control device but does not create the ublk device yet.
 //
@@ -123,9 +120,11 @@ func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int
 	}
 
 	return &Device{
+		devID:     -1,
 		controlFD: controlFD,
 		readAt:    readAt,
 		writeAt:   writeAt,
+		flags:     UBLK_F_CMD_IOCTL_ENCODE,
 		stopCh:    make(chan struct{}),
 	}, nil
 }
@@ -141,10 +140,12 @@ func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error
 	}
 
 	d := &Device{
+		devID:     -1,
 		controlFD: controlFD,
 		backend:   backend,
 		readAt:    backend.ReadAt,
 		writeAt:   backend.WriteAt,
+		flags:     UBLK_F_CMD_IOCTL_ENCODE,
 		stopCh:    make(chan struct{}),
 	}
 
@@ -165,12 +166,28 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 	if d.started {
 		return ErrDeviceAlreadyStarted
 	}
+	if d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 && d.flags&UBLK_F_USER_COPY != 0 {
+		return errors.New("ZeroCopy cannot be used with UserCopy")
+	}
+	if d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 {
+		if d.backend == nil {
+			return errors.New("ZeroCopy requires a backend that implements FixedFileBackend")
+		}
+		if _, ok := d.backend.(FixedFileBackend); !ok {
+			return errors.New("ZeroCopy requires a backend that implements FixedFileBackend")
+		}
+	}
 
 	// Prepare device info
+	d.flags |= UBLK_F_CMD_IOCTL_ENCODE
+	maxIOBufBytes := d.maxIOBufBytes
+	if maxIOBufBytes == 0 {
+		maxIOBufBytes = 512 * 1024
+	}
 	info := UblksrvCtrlDevInfo{
 		NrHWQueues:    nrHWQueues,
 		QueueDepth:    queueDepth,
-		MaxIOBufBytes: 512 * 1024, // 512KB default
+		MaxIOBufBytes: maxIOBufBytes,
 		Flags:         d.flags,
 	}
 
@@ -189,6 +206,7 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 
 	d.info = info
 	d.devID = int(info.DevID)
+	d.added = true
 
 	return d.openCharDevice()
 }
@@ -224,28 +242,51 @@ func (d *Device) openCharDevice() error {
 }
 
 // SetParams configures the device parameters (UBLK_U_CMD_SET_PARAMS).
-func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32) error {
+func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32, discardSectors, discardSegs uint32) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.started {
 		return ErrDeviceAlreadyStarted
 	}
+	if blockSize == 0 || blockSize&(blockSize-1) != 0 {
+		return ErrInvalidParameters
+	}
+	if size == 0 || size%blockSize != 0 {
+		return ErrInvalidParameters
+	}
+	if maxSectors == 0 {
+		return ErrInvalidParameters
+	}
 
 	params := UblkParams{}
-	params.Basic.LogicalBSize = uint32(blockSize)
-	params.Basic.PhysicalBSize = uint32(blockSize)
-	params.Basic.IOOptBSize = uint32(blockSize)
+	blockShift := uint8(bits.TrailingZeros64(blockSize))
+	params.Len = uint32(unsafe.Sizeof(params))
+	params.Types = UBLK_PARAM_TYPE_BASIC
+	params.Basic.LogicalBSShift = blockShift
+	params.Basic.PhysicalBSShift = blockShift
+	params.Basic.IOOptShift = blockShift
+	params.Basic.IOMinShift = blockShift
 	params.Basic.MaxSectors = maxSectors
 	params.Basic.DevSectors = size / blockSize
-	params.IO.QueueDepth = d.info.QueueDepth
-	params.IO.NrHWQueues = d.info.NrHWQueues
+
+	if discardSectors > 0 {
+		params.Types |= UBLK_PARAM_TYPE_DISCARD
+		params.Discard.DiscardAlignment = uint32(blockSize)
+		params.Discard.DiscardGranularity = uint32(blockSize)
+		params.Discard.MaxDiscardSectors = discardSectors
+		params.Discard.MaxWriteZeroesSectors = discardSectors
+		if discardSegs == 0 {
+			discardSegs = 1
+		}
+		params.Discard.MaxDiscardSegments = uint16(discardSegs)
+	}
 
 	cmd := UblksrvCtrlCmd{
 		DevID:   uint32(d.devID),
 		QueueID: ^uint16(0), // -1 for non-queue commands
 		Addr:    uint64(uintptr(unsafe.Pointer(&params))),
-		Len:     uint16(unsafe.Sizeof(params)),
+		Len:     uint16(params.Len),
 	}
 
 	if err := d.ctrlCommand(uint32(UBLK_U_CMD_SET_PARAMS), &cmd); err != nil {
@@ -279,7 +320,11 @@ func (d *Device) Start() error {
 
 	d.started = true
 	if err := d.startWorkers(); err != nil {
+		stopErr := d.ctrlCommand(uint32(UBLK_U_CMD_STOP_DEV), &cmd)
 		d.started = false
+		if stopErr != nil {
+			return errors.Join(err, fmt.Errorf("failed to stop device after worker init error: %w", stopErr))
+		}
 		return err
 	}
 	return nil
@@ -312,7 +357,7 @@ func (d *Device) startWorkers() error {
 	return nil
 }
 
-// Stop deactivates the device (UBLK_CMD_STOP_DEV) and stops IO workers.
+// Stop deactivates the device (UBLK_U_CMD_STOP_DEV) and stops IO workers.
 func (d *Device) Stop() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -365,22 +410,26 @@ func (d *Device) Delete() error {
 
 	if d.charDevFD != nil {
 		if err := d.charDevFD.Close(); err != nil {
-			logf("Device %d: char dev close error: %v", d.devID, err)
+			log.Printf("Device %d: char dev close error: %v", d.devID, err)
 		}
 		d.charDevFD = nil
 	}
 
-	cmd := UblksrvCtrlCmd{
-		DevID:   uint32(d.devID),
-		QueueID: ^uint16(0), // -1 for non-queue commands
-	}
-	if err := d.ctrlCommand(uint32(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
-		return fmt.Errorf("failed to delete device: %w", err)
+	if d.added && d.devID >= 0 {
+		cmd := UblksrvCtrlCmd{
+			DevID:   uint32(d.devID),
+			QueueID: ^uint16(0), // -1 for non-queue commands
+		}
+		if err := d.ctrlCommand(uint32(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
+			return fmt.Errorf("failed to delete device: %w", err)
+		}
+		d.added = false
+		d.devID = -1
 	}
 
 	if d.controlFD != nil {
 		if err := d.controlFD.Close(); err != nil {
-			logf("Device %d: control fd close error: %v", d.devID, err)
+			log.Printf("Device %d: control fd close error: %v", d.devID, err)
 		}
 		d.controlFD = nil
 	}
@@ -390,12 +439,23 @@ func (d *Device) Delete() error {
 
 // BlockDevicePath returns the path to the block device (e.g., /dev/ublkb0).
 func (d *Device) BlockDevicePath() string {
+	if d.devID < 0 {
+		return ""
+	}
 	return fmt.Sprintf("/dev/ublkb%d", d.devID)
 }
 
 // DeviceID returns the ublk device ID.
 func (d *Device) DeviceID() int {
 	return d.devID
+}
+
+func (d *Device) blockSize() uint64 {
+	shift := d.params.Basic.LogicalBSShift
+	if shift == 0 {
+		return 512
+	}
+	return 1 << shift
 }
 
 // ctrlCommand executes a control command via io_uring.

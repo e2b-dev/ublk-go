@@ -9,7 +9,7 @@ import (
 type UblkIOCommand struct {
 	QID    uint16
 	Tag    uint16
-	Result uint64
+	Result int32
 	Addr   uint64
 }
 
@@ -31,21 +31,43 @@ func UblkIOCommandFromBytes(data []byte) *UblkIOCommand {
 	return (*UblkIOCommand)(unsafe.Pointer(&data[0]))
 }
 
-// NewFetchReqCommand creates a UBLK_IO_FETCH_REQ command.
+// NewFetchReqCommand creates a UBLK_U_IO_FETCH_REQ command.
 // Returns command and the Op code.
-func NewFetchReqCommand(qid, tag uint16) (*UblkIOCommand, uint32) {
+func NewFetchReqCommand(qid, tag uint16, addr uint64) (*UblkIOCommand, uint32) {
 	return &UblkIOCommand{
-		QID: qid,
-		Tag: tag,
-	}, UBLK_IO_FETCH_REQ
+		QID:  qid,
+		Tag:  tag,
+		Addr: addr,
+	}, uint32(UBLK_U_IO_FETCH_REQ)
 }
 
-// NewCommitAndFetchReqCommand creates a UBLK_IO_COMMIT_AND_FETCH_REQ command.
+// NewCommitAndFetchReqCommand creates a UBLK_U_IO_COMMIT_AND_FETCH_REQ command.
 // Returns command and the Op code.
-func NewCommitAndFetchReqCommand(qid, tag uint16, result uint64) (*UblkIOCommand, uint32) {
+func NewCommitAndFetchReqCommand(qid, tag uint16, result int32, addr uint64) (*UblkIOCommand, uint32) {
 	return &UblkIOCommand{
 		QID:    qid,
 		Tag:    tag,
 		Result: result,
-	}, UBLK_IO_COMMIT_AND_FETCH_REQ
+		Addr:   addr,
+	}, uint32(UBLK_U_IO_COMMIT_AND_FETCH_REQ)
+}
+
+// NewRegisterIOBufCommand creates a UBLK_U_IO_REGISTER_IO_BUF command.
+// addr is the io_uring fixed buffer index to register.
+func NewRegisterIOBufCommand(qid, tag uint16, addr uint64) (*UblkIOCommand, uint32) {
+	return &UblkIOCommand{
+		QID:  qid,
+		Tag:  tag,
+		Addr: addr,
+	}, uint32(UBLK_U_IO_REGISTER_IO_BUF)
+}
+
+// NewUnregisterIOBufCommand creates a UBLK_U_IO_UNREGISTER_IO_BUF command.
+// addr is the io_uring fixed buffer index to unregister.
+func NewUnregisterIOBufCommand(qid, tag uint16, addr uint64) (*UblkIOCommand, uint32) {
+	return &UblkIOCommand{
+		QID:  qid,
+		Tag:  tag,
+		Addr: addr,
+	}, uint32(UBLK_U_IO_UNREGISTER_IO_BUF)
 }

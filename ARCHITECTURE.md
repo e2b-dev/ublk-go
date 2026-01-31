@@ -2,12 +2,12 @@
 
 ## Overview
 
-A pure Go library for creating Linux userspace block devices using the ublk driver.
-No CGO or C dependencies required.
+A Go library for creating Linux userspace block devices using the ublk driver.
+Uses CGO to import io_uring constants from liburing headers.
 
 ## Design Principles
 
-1. **Pure Go** - No CGO required, direct syscalls for io_uring
+1. **Direct syscalls** - io_uring via syscalls, constants from liburing headers
 2. **Zero Allocations** - Hot paths are allocation-free
 3. **Clean Separation** - Control plane, IO plane, and buffer management are modular
 4. **Thread Safety** - All public APIs are safe for concurrent use
@@ -18,17 +18,15 @@ No CGO or C dependencies required.
 ublk/
 ├── api.go                   # High-level API (CreateDevice, Backend interface)
 ├── device.go                # Device lifecycle management
-├── ring.go                  # Pure Go io_uring implementation
+├── control_ring.go          # Control-plane io_uring for /dev/ublk-control
+├── ring.go                  # io_uring implementation (syscalls)
 ├── io_worker.go             # Per-queue IO handling
-├── buffer.go                # Buffer management
-├── request.go               # Request parsing
+├── ioctl.go                 # Ioctl encoding helpers and control structs
 ├── types.go                 # ublk constants and types
 ├── uring_types.go           # io_uring struct definitions
-├── uring_constants_pure.go  # Pure Go constants (default)
-├── uring_constants.go       # CGO constants (optional)
+├── uring_constants.go       # CGO constants (liburing headers)
 ├── ublk_cmd.go              # ublk command structures
 ├── stats.go                 # IO statistics and observability
-└── log.go                   # Configurable logging
 ```
 
 ## Data Flow
@@ -72,25 +70,34 @@ Requires `IORING_SETUP_SQE128` for the 80-byte command payload.
 
 ### IO Plane (`ring.go`, `io_worker.go`)
 
-Pure Go io_uring using direct syscalls:
+io_uring using direct syscalls:
 
 - `SYS_IO_URING_SETUP` - Create ring instance
 - `SYS_IO_URING_ENTER` - Submit and wait for completions
 - `IORING_OP_URING_CMD` - ublk passthrough commands
 
-### Buffer Management (`buffer.go`)
+### Buffer Management (`io_worker.go`)
 
-Memory layout of mmap'd area from `/dev/ublkcN`:
+The ublk driver exposes a shared mmap region containing an array of
+`UblksrvIODesc` structures (one per tag). ublk-go mmaps only this
+descriptor array and allocates per-tag IO buffers in Go memory.
 
 ```
-┌─────────────────────┐  offset 0
-│  IO Descriptors     │  queueDepth × sizeof(UblksrvIODesc)
-├─────────────────────┤
-│  Request Data       │  queueDepth × 256 bytes
-├─────────────────────┤
-│  Buffers            │  MaxIOBufBytes
-└─────────────────────┘
+mmap(/dev/ublkcN)
+┌────────────────────────────────────────────┐
+│ IO Descriptors (queueDepth entries)        │
+└────────────────────────────────────────────┘
+
+Go heap
+┌────────────────────────────────────────────┐
+│ Per-tag IO buffers (queueDepth × MaxIOBufBytes) │
+└────────────────────────────────────────────┘
 ```
+
+For each FETCH/COMMIT command, the buffer address is passed via
+`ublksrv_io_cmd.addr` so the kernel can copy data to/from that buffer.
+When `UBLK_F_USER_COPY` is enabled, ublk-go skips buffer addresses and
+uses `pread()/pwrite()` on `/dev/ublkcN` instead.
 
 ### High-Level API (`api.go`)
 
@@ -115,13 +122,13 @@ Memory layout of mmap'd area from `/dev/ublkcN`:
 
 ## Performance
 
-Zero-allocation hot paths verified by benchmarks:
+Hot paths are covered by benchmarks (see `ublk/benchmark_test.go`):
 
 ```
-BenchmarkGetSetIODesc           617M ops    2.1 ns/op   0 allocs
-BenchmarkBufferManagerGetIODescBuffer  578M ops  2.0 ns/op  0 allocs
-BenchmarkParseRequest           812M ops    1.4 ns/op   0 allocs
-BenchmarkUblkIOCommandToBytes  1000M ops    1.0 ns/op   0 allocs
+BenchmarkGetSetIODesc
+BenchmarkUblkIOCommandToBytes
+BenchmarkRoundUpPow2
+BenchmarkTestBackendReadWrite
 ```
 
 ### io_uring Optimizations
@@ -140,7 +147,6 @@ BenchmarkUblkIOCommandToBytes  1000M ops    1.0 ns/op   0 allocs
 | `UBLK_F_SUPPORT_ZERO_COPY` | Register buffers to avoid copies |
 | `UBLK_F_AUTO_BUF_REG` | Automatic buffer management |
 | `UBLK_F_USER_COPY` | Skip copy for FLUSH/DISCARD |
-| `UBLK_F_USER_RECOVERY` | Survive server restarts |
 
 ## Observability
 

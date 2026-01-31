@@ -3,6 +3,8 @@ package ublk
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -10,10 +12,26 @@ import (
 
 // IO result codes (returned in EndIO field).
 const (
-	IOResultOK      uint16 = 0
-	IOResultEIO     uint16 = 5
-	IOResultENOTSUP uint16 = 95
+	IOResultOK      int32 = 0
+	IOResultEIO     int32 = 5
+	IOResultENOTSUP int32 = 95
 )
+
+const (
+	userDataDataFlag uint64 = 1 << 63
+)
+
+func dataUserData(tag uint16) uint64 {
+	return userDataDataFlag | uint64(tag)
+}
+
+func isDataUserData(userData uint64) bool {
+	return userData&userDataDataFlag != 0
+}
+
+func dataUserTag(userData uint64) uint16 {
+	return uint16(userData)
+}
 
 // ioWorker handles IO operations for a specific queue.
 // Each queue has exactly one goroutine driving the io_uring ring.
@@ -23,25 +41,49 @@ type ioWorker struct {
 	queueDepth uint16
 	mmapAddr   []byte // Mapped descriptor area
 	ring       *Ring
+	zcRing     *Ring
+	userCopy   bool
+	ioBufBytes int
+	zeroCopy   bool
+	autoBufReg bool
+	zcBackend  int
 
 	// Tag state tracking
 	tagSubmitted []bool // tracks which tags have pending fetch requests
+	dataPending  []bool
+	dataOp       []uint8
+	dataFlags    []uint32
+	dataLen      []uint64
+	tagBuffers   [][]byte
+	bufPool      []byte
 	scratchBuf   []byte // For USER_COPY data transfer
 }
 
 func newIOWorker(device *Device, qid uint16, queueDepth uint16) *ioWorker {
-	// Allocate scratch buffer for USER_COPY (default 512KB)
-	bufSize := int(device.info.MaxIOBufBytes)
-	if bufSize == 0 {
-		bufSize = 512 * 1024
+	autoBufReg := device.flags&UBLK_F_AUTO_BUF_REG != 0
+	var dataPending []bool
+	var dataOp []uint8
+	var dataFlags []uint32
+	var dataLen []uint64
+	if autoBufReg {
+		dataPending = make([]bool, queueDepth)
+		dataOp = make([]uint8, queueDepth)
+		dataFlags = make([]uint32, queueDepth)
+		dataLen = make([]uint64, queueDepth)
 	}
-
 	return &ioWorker{
 		device:       device,
 		qid:          qid,
 		queueDepth:   queueDepth,
+		userCopy:     device.HasUserCopy(),
+		ioBufBytes:   int(device.info.MaxIOBufBytes),
+		zeroCopy:     device.flags&UBLK_F_SUPPORT_ZERO_COPY != 0,
+		autoBufReg:   autoBufReg,
 		tagSubmitted: make([]bool, queueDepth),
-		scratchBuf:   make([]byte, bufSize),
+		dataPending:  dataPending,
+		dataOp:       dataOp,
+		dataFlags:    dataFlags,
+		dataLen:      dataLen,
 	}
 }
 
@@ -75,11 +117,21 @@ func (w *ioWorker) Init() error {
 		return fmt.Errorf("queue %d: failed to mmap IO descs: %w", w.qid, err)
 	}
 
+	if err := w.initZeroCopy(); err != nil {
+		w.Close()
+		return fmt.Errorf("queue %d: failed to init zero-copy: %w", w.qid, err)
+	}
+
+	if err := w.initBuffers(); err != nil {
+		w.Close()
+		return fmt.Errorf("queue %d: failed to init IO buffers: %w", w.qid, err)
+	}
+
 	// Register the char device fd for reduced per-IO overhead
 	charFD := int(w.device.charDevFD.Fd())
 	if err := w.ring.RegisterFiles([]int{charFD}); err != nil {
 		// Not fatal - just means we can't use fixed files
-		logf("Queue %d: fixed file registration failed (non-fatal): %v", w.qid, err)
+		log.Printf("Queue %d: fixed file registration failed (non-fatal): %v", w.qid, err)
 	}
 
 	// Submit initial FETCH_REQ for all tags
@@ -96,12 +148,111 @@ func (w *ioWorker) Close() {
 	if w.mmapAddr != nil {
 		w.munmapIODescs()
 	}
+	if w.zcRing != nil {
+		if err := w.zcRing.Close(); err != nil {
+			log.Printf("Queue %d: zero-copy ring close error: %v", w.qid, err)
+		}
+		w.zcRing = nil
+	}
 	if w.ring != nil {
 		if err := w.ring.Close(); err != nil {
-			logf("Queue %d: ring close error: %v", w.qid, err)
+			log.Printf("Queue %d: ring close error: %v", w.qid, err)
 		}
 		w.ring = nil
 	}
+}
+
+func (w *ioWorker) initBuffers() error {
+	bufSize := w.ioBufBytes
+	if bufSize <= 0 {
+		bufSize = 512 * 1024
+	}
+	w.ioBufBytes = bufSize
+
+	if w.userCopy {
+		w.scratchBuf = make([]byte, bufSize)
+		return nil
+	}
+	if w.zeroCopy {
+		w.scratchBuf = make([]byte, bufSize)
+		return nil
+	}
+
+	if w.queueDepth == 0 {
+		return errors.New("queue depth is zero")
+	}
+	total := int(w.queueDepth) * bufSize
+	if int(w.queueDepth) != 0 && total/int(w.queueDepth) != bufSize {
+		return fmt.Errorf("buffer size overflow: depth=%d size=%d", w.queueDepth, bufSize)
+	}
+
+	w.bufPool = w.makeAlignedPool(total)
+	if w.bufPool == nil {
+		return errors.New("failed to allocate buffer pool")
+	}
+	w.tagBuffers = make([][]byte, w.queueDepth)
+	for tag := range int(w.queueDepth) {
+		start := tag * bufSize
+		w.tagBuffers[tag] = w.bufPool[start : start+bufSize]
+	}
+	return nil
+}
+
+func (w *ioWorker) initZeroCopy() error {
+	if !w.zeroCopy {
+		return nil
+	}
+	if w.device.backend == nil {
+		return errors.New("zero-copy requires backend")
+	}
+	fb, ok := w.device.backend.(FixedFileBackend)
+	if !ok {
+		return errors.New("zero-copy requires FixedFileBackend")
+	}
+	f, err := fb.FixedFile()
+	if err != nil {
+		return fmt.Errorf("failed to get fixed file: %w", err)
+	}
+	if f == nil {
+		return errors.New("fixed file is nil")
+	}
+	w.zcBackend = int(f.Fd())
+
+	if w.autoBufReg {
+		if err := w.ring.RegisterSparseBuffers(uint32(w.queueDepth)); err != nil {
+			return fmt.Errorf("failed to register sparse buffers: %w", err)
+		}
+		return nil
+	}
+
+	entries := max(uint(w.queueDepth), 2)
+	zcRing, err := NewRingWithOptions(entries, 0, WithSingleIssuer(), WithDeferTaskrun(), WithSQE128())
+	if err != nil {
+		zcRing, err = NewRingWithOptions(entries, 0, WithSQE128())
+		if err != nil {
+			return fmt.Errorf("failed to create zero-copy ring: %w", err)
+		}
+	}
+	if err := zcRing.RegisterSparseBuffers(uint32(w.queueDepth)); err != nil {
+		_ = zcRing.Close()
+		return fmt.Errorf("failed to register sparse buffers: %w", err)
+	}
+	w.zcRing = zcRing
+	return nil
+}
+
+func (w *ioWorker) makeAlignedPool(size int) []byte {
+	if size <= 0 {
+		return nil
+	}
+	const align = 2 * 1024 * 1024
+	if size > math.MaxInt-(align-1) {
+		return nil
+	}
+	raw := make([]byte, size+align-1)
+	addr := uintptr(unsafe.Pointer(&raw[0]))
+	offset := int((uintptr(align) - (addr % uintptr(align))) % uintptr(align))
+	return raw[offset : offset+size]
 }
 
 // Loop runs the main event loop.
@@ -153,29 +304,57 @@ func (w *ioWorker) eventLoop() {
 			case <-w.device.stopCh:
 				return
 			default:
-				logf("Queue %d: WaitCQE error: %v", w.qid, err)
+				log.Printf("Queue %d: WaitCQE error: %v", w.qid, err)
 				return
 			}
 		}
 
-		tag := uint16(cqe.UserData)
+		userData := cqe.UserData
 		w.ring.SeenCQE(cqe)
 
+		if isDataUserData(userData) {
+			tag := dataUserTag(userData)
+			res := w.finishAutoDataIO(tag, cqe.Res)
+			if err := w.submitCommitAndFetch(tag, res); err != nil {
+				log.Printf("Queue %d Tag %d: commitAndFetch failed: %v", w.qid, tag, err)
+				continue
+			}
+			pendingSubmit++
+			if pendingSubmit >= maxBatch || !w.ring.CQEReady() {
+				if _, err := w.ring.Submit(); err != nil {
+					log.Printf("Queue %d: submit failed: %v", w.qid, err)
+				}
+				pendingSubmit = 0
+			}
+			continue
+		}
+
+		tag := uint16(userData)
 		if cqe.Res < 0 {
 			select {
 			case <-w.device.stopCh:
 				return
 			default:
-				logf("Queue %d Tag %d: command failed: %d", w.qid, tag, cqe.Res)
+				log.Printf("Queue %d Tag %d: command failed: %d", w.qid, tag, cqe.Res)
 				continue
 			}
 		}
 
 		// Handle Request and get result
-		res := w.handleRequest(tag)
+		res, queued := w.handleRequest(tag)
+		if queued {
+			pendingSubmit++
+			if pendingSubmit >= maxBatch || !w.ring.CQEReady() {
+				if _, err := w.ring.Submit(); err != nil {
+					log.Printf("Queue %d: submit failed: %v", w.qid, err)
+				}
+				pendingSubmit = 0
+			}
+			continue
+		}
 
 		if err := w.submitCommitAndFetch(tag, res); err != nil {
-			logf("Queue %d Tag %d: commitAndFetch failed: %v", w.qid, tag, err)
+			log.Printf("Queue %d Tag %d: commitAndFetch failed: %v", w.qid, tag, err)
 			continue
 		}
 		pendingSubmit++
@@ -183,111 +362,402 @@ func (w *ioWorker) eventLoop() {
 		// Batch submissions
 		if pendingSubmit >= maxBatch || !w.ring.CQEReady() {
 			if _, err := w.ring.Submit(); err != nil {
-				logf("Queue %d: submit failed: %v", w.qid, err)
+				log.Printf("Queue %d: submit failed: %v", w.qid, err)
 			}
 			pendingSubmit = 0
 		}
 	}
 }
 
-func (w *ioWorker) handleRequest(tag uint16) int32 {
+func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 	desc := w.getIODesc(tag)
 
 	// Op is lower 8 bits, Flags are upper 24 bits
 	op := uint8(desc.OpFlags & 0xff)
-	// flags := desc.OpFlags >> 8
 
-	blockSize := w.device.params.Basic.LogicalBSize
-	if blockSize == 0 {
-		blockSize = 512
+	blockSize := w.device.blockSize()
+	if blockSize <= 0 {
+		log.Printf("Queue %d Tag %d: invalid block size %d", w.qid, tag, blockSize)
+		w.device.stats.recordOp(op, 0, false)
+		return IOResultEIO, false
+	}
+
+	if desc.StartSector > uint64(math.MaxInt64)/blockSize {
+		log.Printf("Queue %d Tag %d: start sector %d overflows offset", w.qid, tag, desc.StartSector)
+		w.device.stats.recordOp(op, 0, false)
+		return IOResultEIO, false
 	}
 
 	// Use fields from UblksrvIODesc (match ublk_drv logic)
 	offset := int64(desc.StartSector) * int64(blockSize)
-	length := int(desc.NrSectors) * int(blockSize)
+	length64 := uint64(desc.NrSectors) * blockSize
 
 	// Guard against buffer overflow
-	if length > len(w.scratchBuf) {
-		logf("Queue %d Tag %d: IO length %d > scratch buffer %d", w.qid, tag, length, len(w.scratchBuf))
-		return int32(IOResultEIO)
+	if length64 > uint64(^uint(0)) {
+		log.Printf("Queue %d Tag %d: IO length %d overflows int", w.qid, tag, length64)
+		w.device.stats.recordOp(op, 0, false)
+		return IOResultEIO, false
 	}
 
-	buf := w.scratchBuf[:length]
+	length := int(length64)
+
+	if w.zeroCopy && (op == UBLK_IO_OP_READ || op == UBLK_IO_OP_WRITE) {
+		if w.autoBufReg {
+			if length == 0 {
+				w.device.stats.recordOp(op, 0, true)
+				return IOResultOK, false
+			}
+			if err := w.submitAutoZeroCopyIO(op, desc.OpFlags, offset, length, tag); err != nil {
+				log.Printf("Queue %d Tag %d: auto zero-copy submit failed: %v", w.qid, tag, err)
+				w.device.stats.recordOp(op, uint64(length), false)
+				return IOResultEIO, false
+			}
+			return 0, true
+		}
+		res := w.executeZeroCopy(op, desc.OpFlags, offset, length, tag)
+		w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+		return res, false
+	}
+
+	var buf []byte
+	if length > 0 {
+		if w.userCopy || w.zeroCopy {
+			if length > len(w.scratchBuf) {
+				log.Printf("Queue %d Tag %d: IO length %d > scratch buffer %d", w.qid, tag, length, len(w.scratchBuf))
+				w.device.stats.recordOp(op, uint64(length), false)
+				return IOResultEIO, false
+			}
+			buf = w.scratchBuf[:length]
+		} else {
+			tagIdx := int(tag)
+			if tagIdx >= len(w.tagBuffers) {
+				log.Printf("Queue %d Tag %d: tag buffer missing", w.qid, tag)
+				w.device.stats.recordOp(op, uint64(length), false)
+				return IOResultEIO, false
+			}
+			tagBuf := w.tagBuffers[tagIdx]
+			if length > len(tagBuf) {
+				log.Printf("Queue %d Tag %d: IO length %d > tag buffer %d", w.qid, tag, length, len(tagBuf))
+				w.device.stats.recordOp(op, uint64(length), false)
+				return IOResultEIO, false
+			}
+			buf = tagBuf[:length]
+		}
+	}
 
 	// Execute IO with USER_COPY handling
-	return w.executeIO(op, buf, offset, tag)
+	res := w.executeIO(op, desc.OpFlags, buf, offset, tag)
+	w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+	return res, false
 }
 
-func (w *ioWorker) executeIO(op uint8, buf []byte, offset int64, tag uint16) int32 {
-	// Offset for pread/pwrite to char device (USER_COPY)
-	// Must match driver's expectation: UBLKSRV_IO_BUF_OFFSET + encoded(qid, tag, offset)
-	devOffset := ublkUserCopyPos(w.qid, tag, 0)
+func (w *ioWorker) executeZeroCopy(op uint8, flags uint32, offset int64, length int, tag uint16) int32 {
+	if w.zcRing == nil || w.zcBackend <= 0 {
+		return IOResultEIO
+	}
+	if length < 0 {
+		return IOResultEIO
+	}
+
+	bufIndex := tag
+	if err := w.zcRegisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: register io buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	res := w.zcFixedIO(op, offset, length, bufIndex, flags)
+
+	if err := w.zcUnregisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: unregister io buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	return res
+}
+
+func (w *ioWorker) submitAutoZeroCopyIO(op uint8, flags uint32, offset int64, length int, tag uint16) error {
+	if !w.autoBufReg {
+		return errors.New("auto buffer registration not enabled")
+	}
+	if w.zcBackend <= 0 {
+		return errors.New("zero-copy backend not initialized")
+	}
+	tagIdx := int(tag)
+	if tagIdx >= len(w.dataPending) {
+		return errors.New("tag out of range")
+	}
+	if w.dataPending[tagIdx] {
+		return errors.New("data IO already pending")
+	}
+
+	sqe, err := w.ring.GetSQE128()
+	if err != nil {
+		return err
+	}
+
+	switch op {
+	case UBLK_IO_OP_READ:
+		sqe.Opcode = IORING_OP_READ_FIXED
+	case UBLK_IO_OP_WRITE:
+		sqe.Opcode = IORING_OP_WRITE_FIXED
+	default:
+		return errors.New("unsupported zero-copy op")
+	}
+
+	sqe.Fd = int32(w.zcBackend)
+	sqe.Off = uint64(offset)
+	sqe.Len = uint32(length)
+	sqe.BufIndex = tag
+	sqe.UserData = dataUserData(tag)
+
+	w.dataPending[tagIdx] = true
+	w.dataOp[tagIdx] = op
+	w.dataFlags[tagIdx] = flags
+	w.dataLen[tagIdx] = uint64(length)
+	return nil
+}
+
+func (w *ioWorker) finishAutoDataIO(tag uint16, cqeRes int32) int32 {
+	tagIdx := int(tag)
+	if tagIdx >= len(w.dataPending) || !w.dataPending[tagIdx] {
+		log.Printf("Queue %d Tag %d: unexpected data completion", w.qid, tag)
+		return IOResultEIO
+	}
+
+	op := w.dataOp[tagIdx]
+	flags := w.dataFlags[tagIdx]
+	length := w.dataLen[tagIdx]
+	w.dataPending[tagIdx] = false
+
+	res := IOResultOK
+	if cqeRes < 0 || uint64(cqeRes) != length {
+		res = IOResultEIO
+	}
+
+	if res == IOResultOK && op == UBLK_IO_OP_WRITE && (flags&UBLK_IO_F_FUA) != 0 {
+		if flusher, ok := w.device.backend.(Flusher); ok {
+			if err := flusher.Flush(); err != nil {
+				log.Printf("Queue %d Tag %d: zero-copy flush failed: %v", w.qid, tag, err)
+				res = IOResultEIO
+			}
+		}
+	}
+
+	w.device.stats.recordOp(op, length, res == IOResultOK)
+	return res
+}
+
+func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, tag uint16) int32 {
+	// Check for FUA flag
+	isFua := (flags & UBLK_IO_F_FUA) != 0
 
 	switch op {
 	case UBLK_IO_OP_READ:
 		// READ: Server reads from backend -> User Buffer
-		n, err := w.device.readAt(buf, offset)
-		if err != nil || n != len(buf) {
-			return int32(IOResultEIO)
+		var n int
+		var err error
+		if rwf, ok := w.device.backend.(ReaderWithFlags); ok {
+			n, err = rwf.ReadAtWithFlags(buf, offset, flags)
+		} else {
+			n, err = w.device.readAt(buf, offset)
 		}
 
-		// Then Copy User Buffer -> Driver (pwrite to char device)
-		_, err = w.device.charDevFD.WriteAt(buf, devOffset)
-		if err != nil {
-			logf("Queue %d Tag %d: pwrite to char dev failed: %v", w.qid, tag, err)
-			return int32(IOResultEIO)
+		if err != nil || n != len(buf) {
+			return IOResultEIO
 		}
-		return int32(IOResultOK)
+
+		if w.userCopy && len(buf) > 0 {
+			if w.device.charDevFD == nil {
+				return IOResultEIO
+			}
+			// Then Copy User Buffer -> Driver (pwrite to char device)
+			devOffset := ublkUserCopyPos(w.qid, tag)
+			nn, err := w.device.charDevFD.WriteAt(buf, devOffset)
+			if err != nil || nn != len(buf) {
+				log.Printf("Queue %d Tag %d: pwrite to char dev failed: %v", w.qid, tag, err)
+				return IOResultEIO
+			}
+		}
+		return IOResultOK
 
 	case UBLK_IO_OP_WRITE:
-		// WRITE: Copy Driver -> User Buffer (pread from char device)
-		_, err := w.device.charDevFD.ReadAt(buf, devOffset)
-		if err != nil {
-			logf("Queue %d Tag %d: pread from char dev failed: %v", w.qid, tag, err)
-			return int32(IOResultEIO)
+		// WRITE: Copy Driver -> User Buffer (pread from char device) when USER_COPY
+		var n int
+		var err error
+		if w.userCopy && len(buf) > 0 {
+			if w.device.charDevFD == nil {
+				return IOResultEIO
+			}
+			devOffset := ublkUserCopyPos(w.qid, tag)
+			nn, err := w.device.charDevFD.ReadAt(buf, devOffset)
+			if err != nil || nn != len(buf) {
+				log.Printf("Queue %d Tag %d: pread from char dev failed: %v", w.qid, tag, err)
+				return IOResultEIO
+			}
 		}
 
-		// Then Write User Buffer -> Backend
-		n, err := w.device.writeAt(buf, offset)
-		if err != nil || n != len(buf) {
-			return int32(IOResultEIO)
+		// Handle FUA optimization
+		if isFua {
+			if fuaWriter, ok := w.device.backend.(FuaWriter); ok {
+				n, err = fuaWriter.WriteFua(buf, offset)
+				if err != nil || n != len(buf) {
+					return IOResultEIO
+				}
+				return IOResultOK
+			}
 		}
-		return int32(IOResultOK)
+
+		// Normal Write (with flags if supported)
+		if wwf, ok := w.device.backend.(WriterWithFlags); ok {
+			n, err = wwf.WriteAtWithFlags(buf, offset, flags)
+		} else {
+			n, err = w.device.writeAt(buf, offset)
+		}
+
+		if err != nil || n != len(buf) {
+			return IOResultEIO
+		}
+
+		// Fallback FUA: Flush after write
+		if isFua {
+			if flusher, ok := w.device.backend.(Flusher); ok {
+				if err := flusher.Flush(); err != nil {
+					return IOResultEIO
+				}
+			}
+		}
+
+		return IOResultOK
 
 	case UBLK_IO_OP_FLUSH:
 		if flusher, ok := w.device.backend.(Flusher); ok {
 			if err := flusher.Flush(); err != nil {
-				return int32(IOResultEIO)
+				return IOResultEIO
 			}
 		}
-		return int32(IOResultOK)
+		return IOResultOK
 
 	case UBLK_IO_OP_DISCARD:
 		if discarder, ok := w.device.backend.(Discarder); ok {
 			if err := discarder.Discard(offset, int64(len(buf))); err != nil {
-				return int32(IOResultEIO)
+				return IOResultEIO
 			}
-			return int32(IOResultOK)
+			return IOResultOK
 		}
-		return int32(IOResultENOTSUP)
+		return IOResultENOTSUP
 
 	case UBLK_IO_OP_WRITE_ZEROES:
 		if wz, ok := w.device.backend.(WriteZeroer); ok {
 			if err := wz.WriteZeroes(offset, int64(len(buf))); err != nil {
-				return int32(IOResultEIO)
+				return IOResultEIO
 			}
-			return int32(IOResultOK)
+			return IOResultOK
 		}
 		clear(buf)
 		n, err := w.device.writeAt(buf, offset)
 		if err != nil || n != len(buf) {
-			return int32(IOResultEIO)
+			return IOResultEIO
 		}
-		return int32(IOResultOK)
+		return IOResultOK
 
 	default:
-		return int32(IOResultENOTSUP) // Unsupported operation
+		return IOResultENOTSUP // Unsupported operation
 	}
+}
+
+func (w *ioWorker) zcRegisterBuf(bufIndex uint16, tag uint16) error {
+	cmd, op := NewRegisterIOBufCommand(w.qid, tag, uint64(bufIndex))
+	return w.submitZCUringCmd(cmd, op)
+}
+
+func (w *ioWorker) zcUnregisterBuf(bufIndex uint16, tag uint16) error {
+	cmd, op := NewUnregisterIOBufCommand(w.qid, tag, uint64(bufIndex))
+	return w.submitZCUringCmd(cmd, op)
+}
+
+func (w *ioWorker) submitZCUringCmd(cmd *UblkIOCommand, op uint32) error {
+	if w.zcRing == nil {
+		return errors.New("zero-copy ring not initialized")
+	}
+	sqe, err := w.zcRing.GetSQE128()
+	if err != nil {
+		return err
+	}
+
+	cmdData := cmd.ToBytes()
+	sqe.Opcode = IORING_OP_URING_CMD
+	sqe.Off = uint64(op)
+	copy(sqe.Cmd[:], cmdData)
+	sqe.Len = uint32(cmd.Size())
+	sqe.Fd = int32(w.device.charDevFD.Fd())
+
+	if _, err := w.zcRing.Submit(); err != nil {
+		return err
+	}
+	cqe, err := w.zcRing.WaitCQE()
+	if err != nil {
+		return err
+	}
+	res := cqe.Res
+	w.zcRing.SeenCQE(cqe)
+	if res < 0 {
+		return fmt.Errorf("uring_cmd failed: %d", res)
+	}
+	return nil
+}
+
+func (w *ioWorker) zcFixedIO(op uint8, offset int64, length int, bufIndex uint16, flags uint32) int32 {
+	if length == 0 {
+		return IOResultOK
+	}
+	if w.zcRing == nil || w.zcBackend <= 0 {
+		return IOResultEIO
+	}
+
+	sqe, err := w.zcRing.GetSQE128()
+	if err != nil {
+		return IOResultEIO
+	}
+
+	switch op {
+	case UBLK_IO_OP_READ:
+		sqe.Opcode = IORING_OP_READ_FIXED
+	case UBLK_IO_OP_WRITE:
+		sqe.Opcode = IORING_OP_WRITE_FIXED
+	default:
+		return IOResultENOTSUP
+	}
+
+	sqe.Fd = int32(w.zcBackend)
+	sqe.Off = uint64(offset)
+	sqe.Len = uint32(length)
+	sqe.BufIndex = bufIndex
+
+	if _, err := w.zcRing.Submit(); err != nil {
+		return IOResultEIO
+	}
+	cqe, err := w.zcRing.WaitCQE()
+	if err != nil {
+		return IOResultEIO
+	}
+	res := cqe.Res
+	w.zcRing.SeenCQE(cqe)
+
+	if res < 0 || res != int32(length) {
+		return IOResultEIO
+	}
+
+	// Best-effort FUA handling: flush after successful write if backend supports it.
+	if op == UBLK_IO_OP_WRITE && (flags&UBLK_IO_F_FUA) != 0 {
+		if flusher, ok := w.device.backend.(Flusher); ok {
+			if err := flusher.Flush(); err != nil {
+				log.Printf("Queue %d Tag %d: zero-copy flush failed: %v", w.qid, bufIndex, err)
+				return IOResultEIO
+			}
+		}
+	}
+
+	return IOResultOK
 }
 
 // submitFetchReq prepares a FETCH_REQ SQE for a tag.
@@ -297,7 +767,8 @@ func (w *ioWorker) submitFetchReq(tag uint16) error {
 		return fmt.Errorf("failed to get SQE128: %w", err)
 	}
 
-	cmd, op := NewFetchReqCommand(w.qid, tag)
+	addr := w.ioBufferAddr(tag)
+	cmd, op := NewFetchReqCommand(w.qid, tag, addr)
 	w.prepareSQE(sqe, cmd, op, tag)
 	return nil
 }
@@ -309,7 +780,8 @@ func (w *ioWorker) submitCommitAndFetch(tag uint16, result int32) error {
 		return fmt.Errorf("failed to get SQE128: %w", err)
 	}
 
-	cmd, op := NewCommitAndFetchReqCommand(w.qid, tag, uint64(result))
+	addr := w.ioBufferAddr(tag)
+	cmd, op := NewCommitAndFetchReqCommand(w.qid, tag, result, addr)
 	w.prepareSQE(sqe, cmd, op, tag)
 	return nil
 }
@@ -327,6 +799,9 @@ func (w *ioWorker) prepareSQE(sqe *UringSQE128, cmd *UblkIOCommand, op uint32, t
 
 	sqe.Len = uint32(cmd.Size()) // Still set len just in case
 	sqe.UserData = uint64(tag)
+	if w.autoBufReg && (op == uint32(UBLK_U_IO_FETCH_REQ) || op == uint32(UBLK_U_IO_COMMIT_AND_FETCH_REQ)) {
+		sqe.Addr = autoBufRegAddr(tag, 0)
+	}
 
 	// Use fixed file if registered (reduces per-IO overhead)
 	if w.ring.HasFixedFiles() {
@@ -335,6 +810,25 @@ func (w *ioWorker) prepareSQE(sqe *UringSQE128, cmd *UblkIOCommand, op uint32, t
 	} else {
 		sqe.Fd = int32(w.device.charDevFD.Fd())
 	}
+}
+
+func autoBufRegAddr(index uint16, flags uint8) uint64 {
+	return uint64(index) | uint64(flags)<<16
+}
+
+func (w *ioWorker) ioBufferAddr(tag uint16) uint64 {
+	if w.userCopy {
+		return 0
+	}
+	tagIdx := int(tag)
+	if tagIdx >= len(w.tagBuffers) {
+		return 0
+	}
+	buf := w.tagBuffers[tagIdx]
+	if len(buf) == 0 {
+		return 0
+	}
+	return uint64(uintptr(unsafe.Pointer(&buf[0])))
 }
 
 func (w *ioWorker) mmapIODescs() error {
@@ -361,7 +855,7 @@ func (w *ioWorker) mmapIODescs() error {
 func (w *ioWorker) munmapIODescs() {
 	if w.mmapAddr != nil {
 		if err := unix.Munmap(w.mmapAddr); err != nil {
-			logf("Queue %d: munmap error: %v", w.qid, err)
+			log.Printf("Queue %d: munmap error: %v", w.qid, err)
 		}
 		w.mmapAddr = nil
 	}

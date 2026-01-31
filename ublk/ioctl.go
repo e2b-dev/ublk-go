@@ -45,6 +45,14 @@ const (
 	ublkCmdGetParams  = 0x09
 )
 
+// Raw IO command numbers (from kernel header).
+const (
+	ublkIOFetchReq          = 0x20
+	ublkIOCommitAndFetchReq = 0x21
+	ublkIORegisterIOBuf     = 0x23
+	ublkIOUnregisterIOBuf   = 0x24
+)
+
 // UblksrvCtrlCmd is the control command structure passed to ioctls.
 // It wraps a pointer to the actual data (like dev info or params).
 type UblksrvCtrlCmd struct {
@@ -79,6 +87,7 @@ type UblksrvCtrlDevInfo struct {
 // Computed ioctl commands (with _IOWR encoding for newer kernels).
 var (
 	ctrlCmdSize = unsafe.Sizeof(UblksrvCtrlCmd{})
+	ioCmdSize   = unsafe.Sizeof(UblkIOCommand{})
 
 	UBLK_U_CMD_ADD_DEV      = iowr(ublkCmdAddDev, ctrlCmdSize)
 	UBLK_U_CMD_DEL_DEV      = iowr(ublkCmdDelDev, ctrlCmdSize)
@@ -87,16 +96,11 @@ var (
 	UBLK_U_CMD_SET_PARAMS   = iowr(ublkCmdSetParams, ctrlCmdSize)
 	UBLK_U_CMD_GET_PARAMS   = ior(ublkCmdGetParams, ctrlCmdSize)
 	UBLK_U_CMD_GET_DEV_INFO = ior(ublkCmdGetDevInfo, ctrlCmdSize)
-)
 
-// Raw command numbers (for older kernels that don't use ioctl encoding).
-const (
-	UBLK_CMD_ADD_DEV    = ublkCmdAddDev
-	UBLK_CMD_DEL_DEV    = ublkCmdDelDev
-	UBLK_CMD_START_DEV  = ublkCmdStartDev
-	UBLK_CMD_STOP_DEV   = ublkCmdStopDev
-	UBLK_CMD_SET_PARAMS = ublkCmdSetParams
-	UBLK_CMD_GET_PARAMS = ublkCmdGetParams
+	UBLK_U_IO_FETCH_REQ            = iowr(ublkIOFetchReq, ioCmdSize)
+	UBLK_U_IO_COMMIT_AND_FETCH_REQ = iowr(ublkIOCommitAndFetchReq, ioCmdSize)
+	UBLK_U_IO_REGISTER_IO_BUF      = iowr(ublkIORegisterIOBuf, ioCmdSize)
+	UBLK_U_IO_UNREGISTER_IO_BUF    = iowr(ublkIOUnregisterIOBuf, ioCmdSize)
 )
 
 // SizeOfCtrlDevInfo returns the size of UblksrvCtrlDevInfo.

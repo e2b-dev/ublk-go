@@ -839,7 +839,7 @@ func TestIntegrationFilesystem(t *testing.T) {
 	content := []byte("Hello, ublk filesystem!")
 
 	// Write
-	if err := os.WriteFile(testFile, content, 0644); err != nil {
+	if err := os.WriteFile(testFile, content, 0o644); err != nil {
 		t.Fatalf("Failed to write to file: %v", err)
 	}
 
@@ -1050,5 +1050,62 @@ func TestIntegrationFirecrackerCompat(t *testing.T) {
 	}
 	if string(buf) != "TEST1" {
 		t.Errorf("Expected 'TEST1', got '%s'", string(buf))
+	}
+}
+
+func TestIntegrationFallocate(t *testing.T) {
+	requireRoot(t)
+
+	const deviceSize = 1024 * 1024 // 1MB
+	backend := newIntegrationBackend(deviceSize)
+
+	config := DefaultConfig()
+	config.Size = deviceSize
+	config.BlockSize = 512
+	config.NrHWQueues = 1
+	config.QueueDepth = 64
+	// Enable DISCARD support explicitly
+	config.MaxDiscardSectors = 256
+	config.MaxDiscardSegments = 1
+
+	dev, err := CreateDevice(backend, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dev.Delete()
+
+	// Wait for device to be ready
+	time.Sleep(100 * time.Millisecond)
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("Failed to open device: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Test pure fallocate (preallocate) - usually translates to valid if backend allows writes,
+	// or might return EOPNOTSUPP if block device doesn't support specific fallocate op.
+	// For block devices, fallocate(0) is often emulation or requires specific support.
+	err = unix.Fallocate(fd, 0, 0, 4096)
+	if err != nil {
+		t.Logf("Fallocate(0) result: %v", err)
+	} else {
+		t.Log("Fallocate(0) succeeded")
+	}
+
+	// Test ZERO_RANGE - translates to WRITE_ZEROES
+	err = unix.Fallocate(fd, unix.FALLOC_FL_ZERO_RANGE, 4096, 4096)
+	if err != nil {
+		t.Logf("Fallocate(ZERO_RANGE) result: %v", err)
+	} else {
+		t.Log("Fallocate(ZERO_RANGE) succeeded")
+	}
+
+	// Test PUNCH_HOLE - translates to DISCARD
+	err = unix.Fallocate(fd, unix.FALLOC_FL_PUNCH_HOLE|unix.FALLOC_FL_KEEP_SIZE, 8192, 4096)
+	if err != nil {
+		t.Logf("Fallocate(PUNCH_HOLE) result: %v", err)
+	} else {
+		t.Log("Fallocate(PUNCH_HOLE) succeeded")
 	}
 }

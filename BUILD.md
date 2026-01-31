@@ -5,24 +5,17 @@
 - Go 1.25 or later
 - Linux kernel 6.0+ with ublk driver enabled
 - **Root privileges (CAP_SYS_ADMIN)** for creating ublk devices
+- liburing development headers and a CGO-enabled Go toolchain
 
 ## Building
 
-The implementation is **pure Go** - no CGO or C dependencies required:
-
-```bash
-go build ./...
-```
-
-### Optional: Build with CGO
-
-If you prefer to validate constants against system headers:
+CGO is required for io_uring constants:
 
 ```bash
 # Install liburing-dev (Ubuntu/Debian) or liburing-devel (Fedora)
 sudo apt-get install liburing-dev gcc
 
-CGO_ENABLED=1 go build ./...
+go build ./...
 ```
 
 ## Testing
@@ -49,17 +42,17 @@ go test ./ublk -race
 ### Run specific test groups
 
 ```bash
-# Buffer manager tests
-go test ./ublk -run BufferManager
-
-# Request parsing tests
-go test ./ublk -run Request
-
 # IO worker tests
 go test ./ublk -run IOWorker
 
+# Ring tests
+go test ./ublk -run Ring
+
 # Type and constant tests
-go test ./ublk -run 'Test.*Size|Test.*Constants'
+go test ./ublk -run 'Test.*Constants|Test.*Size|TestUblkParams'
+
+# Stats tests
+go test ./ublk -run Stats
 ```
 
 ### Benchmarks
@@ -144,10 +137,9 @@ ublk requires root privileges to create block devices:
 sudo go run ./example/main.go
 ```
 
-### CGO build issues (optional CGO mode only)
+### CGO build issues
 
-If building with `CGO_ENABLED=1` and encountering issues:
+If you encounter CGO build issues:
 
 1. Install liburing-dev: `sudo apt-get install liburing-dev gcc`
 2. Check pkg-config: `pkg-config --modversion liburing`
-3. Use pure Go mode instead: `CGO_ENABLED=0 go build ./...`

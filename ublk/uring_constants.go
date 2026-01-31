@@ -11,7 +11,9 @@ import "C"
 
 // Constants from liburing/kernel headers.
 const (
-	IORING_OP_URING_CMD = C.IORING_OP_URING_CMD
+	IORING_OP_URING_CMD   = C.IORING_OP_URING_CMD
+	IORING_OP_READ_FIXED  = C.IORING_OP_READ_FIXED
+	IORING_OP_WRITE_FIXED = C.IORING_OP_WRITE_FIXED
 )
 
 // IORING_SETUP flags for io_uring_setup().

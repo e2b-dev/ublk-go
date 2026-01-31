@@ -29,6 +29,7 @@ linters:
     - godox
     - gomoddirectives
     - gomodguard
+    - gosec           # Too noisy for low-level io_uring code (unsafe is required)
     - ireturn
     - lll
     - maintidx
@@ -51,6 +52,14 @@ linters:
     # Deprecated
     - wsl
     - wsl_v5
+
+  exclusions:
+    rules:
+      # Ignore errcheck for Close/Munmap in tests and examples
+      - path: "_test\\.go$"
+        linters: [errcheck]
+      - path: "example/"
+        linters: [errcheck]
 
   settings:
     forbidigo:
