@@ -99,7 +99,7 @@ func main() {
 	config.ZeroCopy = true // Enable zero-copy mode
 
 	// Create the device
-	dev, err := ublk.CreateDevice(backend, config)
+	dev, err := ublk.New(backend, config)
 	if err != nil {
 		backend.Close()
 		log.Fatalf("Failed to create device: %v", err)

@@ -61,7 +61,7 @@ func main() {
     config.Size = 1024 * 1024 * 1024 // 1GB
     config.BlockSize = 512
     
-    dev, err := ublk.CreateDevice(backend, config)
+    dev, err := ublk.New(backend, config)
     if err != nil {
         panic(err)
     }

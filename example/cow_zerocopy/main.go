@@ -469,7 +469,7 @@ func main() {
 	config.BlockSize = uint64(blockSize)
 	config.UserCopy = true // Required for COW routing in backend
 
-	dev, err := ublk.CreateDevice(backend, config)
+	dev, err := ublk.New(backend, config)
 	if err != nil {
 		log.Fatalf("Failed to create device: %v", err)
 	}

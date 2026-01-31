@@ -98,7 +98,7 @@ func main() {
 	config.NrHWQueues = 1
 	config.QueueDepth = 128
 
-	dev, err := ublk.CreateDevice(backend, config)
+	dev, err := ublk.New(backend, config)
 	if err != nil {
 		log.Fatalf("Failed to create device: %v", err)
 	}

@@ -16,7 +16,7 @@ Uses CGO to import io_uring constants from liburing headers.
 
 ```
 ublk/
-├── api.go                   # High-level API (CreateDevice, Backend interface)
+├── api.go                   # High-level API (New, Backend interface)
 ├── device.go                # Device lifecycle management
 ├── control_ring.go          # Control-plane io_uring for /dev/ublk-control
 ├── ring.go                  # io_uring implementation (syscalls)
@@ -101,7 +101,7 @@ uses `pread()/pwrite()` on `/dev/ublkcN` instead.
 
 ### High-Level API (`api.go`)
 
-- `CreateDevice(backend, config)` - One-call device creation
+- `New(backend, config)` - One-call device creation
 - `Backend` interface - Just implement `ReadAt`/`WriteAt`
 - `Config` struct - Device size, block size, queue configuration
 

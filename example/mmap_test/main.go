@@ -114,7 +114,7 @@ func main() {
 	config.QueueDepth = 64
 	// Note: Requires root/CAP_SYS_ADMIN to create ublk devices
 
-	dev, err := ublk.CreateDevice(backend, config)
+	dev, err := ublk.New(backend, config)
 	if err != nil {
 		log.Fatalf("Failed to create device: %v", err)
 	}

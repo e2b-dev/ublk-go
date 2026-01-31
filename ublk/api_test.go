@@ -51,9 +51,9 @@ func (b *TestBackend) GetData() []byte {
 	return b.data[:b.size]
 }
 
-// TestCreateDevice tests the CreateDevice function.
+// TestNew tests the New function.
 // Not parallelized: interacts with kernel resources.
-func TestCreateDevice(t *testing.T) {
+func TestNew(t *testing.T) {
 	backend := NewTestBackend(1024 * 1024)
 
 	config := DefaultConfig()
@@ -62,9 +62,9 @@ func TestCreateDevice(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Logf("CreateDevice returned error (expected without root/kernel): %v", err)
+		t.Logf("New returned error (expected without root/kernel): %v", err)
 		return
 	}
 
@@ -214,7 +214,7 @@ func TestConfigValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := CreateDevice(backend, tt.config)
+			_, err := New(backend, tt.config)
 			if tt.valid {
 				if err != nil {
 					t.Logf("Expected error (no root/kernel): %v", err)
@@ -299,7 +299,7 @@ func TestBackendOperations(t *testing.T) {
 	}
 }
 
-// TestConfigDefaults tests that CreateDevice applies defaults.
+// TestConfigDefaults tests that New applies defaults.
 // Not parallelized: interacts with kernel resources.
 func TestConfigDefaults(t *testing.T) {
 	backend := NewTestBackend(1024)
@@ -319,9 +319,9 @@ func TestConfigDefaults(t *testing.T) {
 		t.Error("Default queue depth should not be zero")
 	}
 
-	_, err := CreateDevice(backend, config)
+	_, err := New(backend, config)
 	if err != nil {
-		t.Logf("CreateDevice error (expected): %v", err)
+		t.Logf("New error (expected): %v", err)
 	}
 }
 

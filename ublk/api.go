@@ -282,10 +282,13 @@ type COWBackend interface {
 	ReadBaseAt(p []byte, off int64) (n int, err error)
 }
 
-// CreateDevice creates and starts a ublk device with the given backend.
+// New creates and starts a ublk device with the given backend and configuration.
 // The backend's extended interfaces (Flusher, Discarder, WriteZeroer) will be
 // used automatically if implemented.
-func CreateDevice(backend Backend, config Config) (*Device, error) {
+//
+// This is the primary way to create a ublk device. It handles all setup:
+// device creation, parameter configuration, and starting the I/O workers.
+func New(backend Backend, config Config) (*Device, error) {
 	// Validate and apply defaults
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)

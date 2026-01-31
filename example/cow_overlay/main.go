@@ -271,13 +271,13 @@ func main() {
 	config.Size = uint64(size)
 	config.UserCopy = true // Use user-copy for COW decision making
 
-	dev1, err := ublk.CreateDevice(cow1, config)
+	dev1, err := ublk.New(cow1, config)
 	if err != nil {
 		log.Fatalf("Failed to create device 1: %v", err)
 	}
 	defer dev1.Delete()
 
-	dev2, err := ublk.CreateDevice(cow2, config)
+	dev2, err := ublk.New(cow2, config)
 	if err != nil {
 		log.Fatalf("Failed to create device 2: %v", err)
 	}

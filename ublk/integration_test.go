@@ -118,9 +118,9 @@ func TestIntegrationDeviceLifecycle(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -154,9 +154,9 @@ func TestIntegrationMmapReadWrite(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -267,9 +267,9 @@ func TestIntegrationDirectIO(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -349,9 +349,9 @@ func TestIntegrationConcurrentIO(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 128
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -453,9 +453,9 @@ func TestIntegrationRandomIO(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -531,13 +531,13 @@ func TestIntegrationMultipleDevices(t *testing.T) {
 		config.NrHWQueues = 1
 		config.QueueDepth = 32
 
-		dev, err := CreateDevice(backends[i], config)
+		dev, err := New(backends[i], config)
 		if err != nil {
 			// Clean up already created devices
 			for j := 0; j < i; j++ {
 				devices[j].Delete()
 			}
-			t.Fatalf("CreateDevice %d failed: %v", i, err)
+			t.Fatalf("New %d failed: %v", i, err)
 		}
 		devices[i] = dev
 		t.Logf("Created device %d: %s", i, dev.BlockDevicePath())
@@ -616,9 +616,9 @@ func TestIntegrationFlush(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -684,9 +684,9 @@ func TestIntegrationStress(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 128
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -799,9 +799,9 @@ func TestIntegrationFilesystem(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -882,9 +882,9 @@ func TestIntegrationMmapCoherency(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -964,9 +964,9 @@ func TestIntegrationMsync(t *testing.T) {
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
-		t.Fatalf("CreateDevice failed: %v", err)
+		t.Fatalf("New failed: %v", err)
 	}
 	defer dev.Delete()
 
@@ -1068,7 +1068,7 @@ func TestIntegrationFallocate(t *testing.T) {
 	config.MaxDiscardSectors = 256
 	config.MaxDiscardSegments = 1
 
-	dev, err := CreateDevice(backend, config)
+	dev, err := New(backend, config)
 	if err != nil {
 		t.Fatal(err)
 	}

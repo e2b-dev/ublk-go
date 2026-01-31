@@ -634,7 +634,7 @@ func main() {
 	config.BlockSize = uint64(blockSize)
 	config.COW = true
 
-	dev, err := ublk.CreateDevice(backend, config)
+	dev, err := ublk.New(backend, config)
 	if err != nil {
 		log.Fatalf("Failed to create device: %v", err)
 	}

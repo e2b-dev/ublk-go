@@ -18,7 +18,7 @@
 //	config := ublk.DefaultConfig()
 //	config.Size = 1 << 30
 //
-//	dev, err := ublk.CreateDevice(backend, config)
+//	dev, err := ublk.New(backend, config)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
