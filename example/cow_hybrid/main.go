@@ -391,10 +391,45 @@ func (b *HybridCOWBackend) Flush() error {
 	return b.overlay.Sync()
 }
 
-// OverlayFile returns the overlay file for zero-copy registration.
-// This can be used with FixedFileBackend for overlay-only zero-copy.
-func (b *HybridCOWBackend) OverlayFile() *os.File {
-	return b.overlay
+// OverlayFile implements ublk.COWBackend.
+// Returns the overlay file for zero-copy operations.
+func (b *HybridCOWBackend) OverlayFile() (*os.File, error) {
+	return b.overlay, nil
+}
+
+// IsRangeDirty implements ublk.COWBackend.
+// Returns whether the range is all dirty, all clean, or mixed.
+func (b *HybridCOWBackend) IsRangeDirty(offset, length int64) (allDirty, allClean bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	startBlock := offset / b.blockSize
+	endBlock := (offset + length + b.blockSize - 1) / b.blockSize
+
+	allDirty = true
+	allClean = true
+
+	for blk := startBlock; blk < endBlock; blk++ {
+		if b.isBlockDirty(blk) {
+			allClean = false
+		} else {
+			allDirty = false
+		}
+		if !allDirty && !allClean {
+			return false, false
+		}
+	}
+
+	return allDirty, allClean
+}
+
+// ReadCleanAt implements ublk.COWBackend.
+// Reads from the base (clean blocks).
+func (b *HybridCOWBackend) ReadCleanAt(p []byte, off int64) (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	b.readsBase.Add(1)
+	return b.base.ReadAt(p, off)
 }
 
 // DirtyExtents returns dirty regions using SEEK_HOLE/SEEK_DATA.
@@ -591,14 +626,14 @@ func main() {
 	log.Printf("Block size: %d, Total blocks: %d", blockSize, size/blockSize)
 
 	// Create ublk device.
-	// Uses user-copy mode for now. For production:
-	// - Clean block reads: must be user-copy (base is in memory)
-	// - Dirty block reads: could be zero-copy (overlay is a file)
-	// - Writes: could be zero-copy (overlay is a file)
+	// Use HybridCOW mode for optimal performance:
+	// - Clean block reads: user-copy from base (unavoidable - base is in memory)
+	// - Dirty block reads: zero-copy from overlay file
+	// - Writes: zero-copy to overlay file
 	config := ublk.DefaultConfig()
 	config.Size = uint64(size)
 	config.BlockSize = uint64(blockSize)
-	config.UserCopy = true
+	config.HybridCOW = true
 
 	dev, err := ublk.CreateDevice(backend, config)
 	if err != nil {
@@ -612,10 +647,10 @@ func main() {
 	log.Println("  Base: In-memory, compressed (decompressed on-demand)")
 	log.Println("  Overlay: Sparse file (dirty blocks)")
 	log.Println()
-	log.Println("Zero-copy analysis:")
-	log.Println("  - Base reads: MUST be user-copy (data in memory, not file fd)")
-	log.Println("  - Overlay reads: CAN be zero-copy (file fd)")
-	log.Println("  - Writes: CAN be zero-copy (file fd)")
+	log.Println("HybridCOW mode enabled:")
+	log.Println("  - Base reads: user-copy (data in memory, not file fd)")
+	log.Println("  - Overlay reads: ZERO-COPY via io_uring")
+	log.Println("  - Writes: ZERO-COPY via io_uring")
 	log.Println()
 	log.Println("Test commands:")
 	log.Printf("  sudo dd if=%s bs=4k count=10 | xxd | head -20  # Read base", dev.BlockDevicePath())

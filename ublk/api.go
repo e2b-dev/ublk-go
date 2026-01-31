@@ -95,6 +95,16 @@ type Config struct {
 
 	// MaxDiscardSegments is the maximum number of segments in a discard request (default: 1).
 	MaxDiscardSegments uint32
+
+	// HybridCOW enables copy-on-write mode with hybrid I/O paths.
+	// Requires a backend that implements COWBackend interface.
+	// When enabled:
+	//   - Writes: Zero-copy to overlay file
+	//   - Dirty block reads: Zero-copy from overlay file
+	//   - Clean block reads: User-copy via ReadCleanAt (for in-memory/compressed base)
+	// This is ideal for VM snapshots, container images, etc. where the base is
+	// compressed or in-memory, but the overlay is a regular file.
+	HybridCOW bool
 }
 
 // DefaultConfig returns a default configuration.
@@ -162,6 +172,9 @@ func (c *Config) validate() error {
 	}
 	if c.AutoBufReg && c.UserCopy {
 		return errors.New("AutoBufReg cannot be used with UserCopy")
+	}
+	if c.HybridCOW && (c.ZeroCopy || c.AutoBufReg) {
+		return errors.New("HybridCOW cannot be used with ZeroCopy or AutoBufReg")
 	}
 	if c.MaxDiscardSegments > uint32(^uint16(0)) {
 		return fmt.Errorf("MaxDiscardSegments must be <= %d, got %d", ^uint16(0), c.MaxDiscardSegments)
@@ -239,6 +252,36 @@ type WriterWithFlags interface {
 	WriteAtWithFlags(p []byte, off int64, flags uint32) (n int, err error)
 }
 
+// COWBackend is an optional interface for copy-on-write backends with hybrid I/O.
+// It enables zero-copy for the overlay file while using user-copy for base reads.
+//
+// When implemented:
+//   - Writes: Zero-copy to overlay file via io_uring
+//   - Dirty block reads: Zero-copy from overlay file
+//   - Clean block reads: User-copy via ReadAt (for in-memory/compressed base)
+//
+// This is ideal for scenarios where the base image is in-memory, compressed,
+// or fetched from network, but the overlay can be a regular file.
+type COWBackend interface {
+	Backend
+
+	// OverlayFile returns the overlay file for zero-copy operations.
+	// This file receives all writes and contains dirty block data.
+	OverlayFile() (*os.File, error)
+
+	// IsRangeDirty checks if any block in the given range has been written.
+	// Returns (allDirty, allClean) to enable fast-path optimizations:
+	//   - allDirty=true: entire range can be zero-copy from overlay
+	//   - allClean=true: entire range is user-copy from base via ReadAt
+	//   - both false: mixed range, requires per-block routing
+	IsRangeDirty(offset, length int64) (allDirty, allClean bool)
+
+	// ReadCleanAt reads clean (base) data into p at offset off.
+	// Called for clean blocks when zero-copy overlay reads are not applicable.
+	// This allows the base to be in-memory, compressed, or remote.
+	ReadCleanAt(p []byte, off int64) (n int, err error)
+}
+
 // CreateDevice creates and starts a ublk device with the given backend.
 // The backend's extended interfaces (Flusher, Discarder, WriteZeroer) will be
 // used automatically if implemented.
@@ -257,6 +300,10 @@ func CreateDevice(backend Backend, config Config) (*Device, error) {
 	}
 	if config.UserCopy {
 		opts = append(opts, WithUserCopy())
+	}
+	if config.HybridCOW {
+		// HybridCOW uses user-copy for control, with per-request zero-copy routing
+		opts = append(opts, WithUserCopy(), WithHybridCOW())
 	}
 	if config.MaxIOBufBytes > 0 {
 		opts = append(opts, WithMaxIOBufBytes(config.MaxIOBufBytes))

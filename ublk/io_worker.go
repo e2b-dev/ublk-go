@@ -48,6 +48,10 @@ type ioWorker struct {
 	autoBufReg bool
 	zcBackend  int
 
+	// COW backend support: zero-copy overlay + user-copy base
+	cowBackend   COWBackend
+	cowOverlayFD int
+
 	// Tag state tracking
 	tagSubmitted []bool // tracks which tags have pending fetch requests
 	dataPending  []bool
@@ -132,6 +136,12 @@ func (w *ioWorker) Init() error {
 	if err := w.ring.RegisterFiles([]int{charFD}); err != nil {
 		// Not fatal - just means we can't use fixed files
 		log.Printf("Queue %d: fixed file registration failed (non-fatal): %v", w.qid, err)
+	}
+
+	// Initialize COW backend if configured
+	if err := w.initCOWBackend(); err != nil {
+		w.Close()
+		return fmt.Errorf("queue %d: failed to init COW backend: %w", w.qid, err)
 	}
 
 	// Submit initial FETCH_REQ for all tags
@@ -237,6 +247,57 @@ func (w *ioWorker) initZeroCopy() error {
 		_ = zcRing.Close()
 		return fmt.Errorf("failed to register sparse buffers: %w", err)
 	}
+	w.zcRing = zcRing
+	return nil
+}
+
+// initCOWBackend initializes COW backend support for hybrid zero-copy.
+func (w *ioWorker) initCOWBackend() error {
+	if !w.device.hybridCOW {
+		return nil
+	}
+	if w.device.backend == nil {
+		return errors.New("HybridCOW requires backend")
+	}
+
+	cow, ok := w.device.backend.(COWBackend)
+	if !ok {
+		return errors.New("HybridCOW requires COWBackend interface")
+	}
+
+	overlayFile, err := cow.OverlayFile()
+	if err != nil {
+		return fmt.Errorf("failed to get overlay file: %w", err)
+	}
+	if overlayFile == nil {
+		return errors.New("overlay file is nil")
+	}
+
+	w.cowBackend = cow
+	w.cowOverlayFD = int(overlayFile.Fd())
+
+	// Create a secondary ring for zero-copy overlay I/O
+	entries := max(uint(w.queueDepth), 2)
+	zcRing, err := NewRingWithOptions(entries, 0, WithSingleIssuer(), WithDeferTaskrun(), WithSQE128())
+	if err != nil {
+		zcRing, err = NewRingWithOptions(entries, 0, WithSQE128())
+		if err != nil {
+			return fmt.Errorf("failed to create COW ring: %w", err)
+		}
+	}
+
+	// Register the overlay file for fixed file operations
+	if err := zcRing.RegisterFiles([]int{w.cowOverlayFD}); err != nil {
+		_ = zcRing.Close()
+		return fmt.Errorf("failed to register overlay file: %w", err)
+	}
+
+	// Register sparse buffers for zero-copy
+	if err := zcRing.RegisterSparseBuffers(uint32(w.queueDepth)); err != nil {
+		_ = zcRing.Close()
+		return fmt.Errorf("failed to register sparse buffers: %w", err)
+	}
+
 	w.zcRing = zcRing
 	return nil
 }
@@ -419,6 +480,13 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 		return res, false
 	}
 
+	// COW backend: route based on dirty state
+	if w.cowBackend != nil && (op == UBLK_IO_OP_READ || op == UBLK_IO_OP_WRITE) {
+		res := w.executeCOW(op, desc.OpFlags, offset, length, tag)
+		w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+		return res, false
+	}
+
 	var buf []byte
 	if length > 0 {
 		if w.userCopy || w.zeroCopy {
@@ -473,6 +541,192 @@ func (w *ioWorker) executeZeroCopy(op uint8, flags uint32, offset int64, length 
 	}
 
 	return res
+}
+
+// executeCOW handles COW requests with hybrid zero-copy/user-copy routing.
+// - Writes: zero-copy to overlay
+// - Dirty reads: zero-copy from overlay
+// - Clean reads: user-copy from base via ReadCleanAt
+// - Mixed reads: user-copy (could be optimized to split).
+func (w *ioWorker) executeCOW(op uint8, flags uint32, offset int64, length int, tag uint16) int32 {
+	if w.cowBackend == nil || w.zcRing == nil {
+		return IOResultEIO
+	}
+
+	// Writes always go to overlay (zero-copy)
+	if op == UBLK_IO_OP_WRITE {
+		return w.cowWriteOverlay(flags, offset, length, tag)
+	}
+
+	// Read: check dirty state
+	allDirty, allClean := w.cowBackend.IsRangeDirty(offset, int64(length))
+
+	if allDirty {
+		// All dirty: zero-copy from overlay
+		return w.cowReadOverlay(flags, offset, length, tag)
+	}
+
+	if allClean {
+		// All clean: user-copy from base
+		return w.cowReadBase(flags, offset, length, tag)
+	}
+
+	// Mixed: user-copy for now (could optimize with split later)
+	// This reads from both sources and assembles in buffer
+	return w.cowReadMixed(flags, offset, length, tag)
+}
+
+// cowWriteOverlay writes to overlay using zero-copy.
+func (w *ioWorker) cowWriteOverlay(_ uint32, offset int64, length int, tag uint16) int32 {
+	bufIndex := tag
+
+	// Register the ublk buffer
+	if err := w.zcRegisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: COW register buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	// Perform zero-copy write to overlay
+	res := w.cowFixedIO(UBLK_IO_OP_WRITE, offset, length, bufIndex)
+
+	// Unregister buffer
+	if err := w.zcUnregisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: COW unregister buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	return res
+}
+
+// cowReadOverlay reads from overlay using zero-copy.
+func (w *ioWorker) cowReadOverlay(_ uint32, offset int64, length int, tag uint16) int32 {
+	bufIndex := tag
+
+	// Register the ublk buffer
+	if err := w.zcRegisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: COW register buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	// Perform zero-copy read from overlay
+	res := w.cowFixedIO(UBLK_IO_OP_READ, offset, length, bufIndex)
+
+	// Unregister buffer
+	if err := w.zcUnregisterBuf(bufIndex, tag); err != nil {
+		log.Printf("Queue %d Tag %d: COW unregister buf failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	return res
+}
+
+// cowReadBase reads from base using user-copy.
+func (w *ioWorker) cowReadBase(_ uint32, offset int64, length int, tag uint16) int32 {
+	if length > len(w.scratchBuf) {
+		log.Printf("Queue %d Tag %d: COW length %d > scratch buffer", w.qid, tag, length)
+		return IOResultEIO
+	}
+
+	buf := w.scratchBuf[:length]
+
+	// Read from base (decompressed/in-memory data)
+	n, err := w.cowBackend.ReadCleanAt(buf, offset)
+	if err != nil {
+		log.Printf("Queue %d Tag %d: COW base read failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+	if n < length {
+		// Zero-fill remainder
+		for i := n; i < length; i++ {
+			buf[i] = 0
+		}
+	}
+
+	// Write to ublk buffer (user-copy)
+	bufOffset := int64(tag) * int64(w.ioBufBytes)
+	_, err = w.device.charDevFD.WriteAt(buf, bufOffset)
+	if err != nil {
+		log.Printf("Queue %d Tag %d: COW pwrite failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	return IOResultOK
+}
+
+// cowReadMixed handles reads that span dirty and clean blocks.
+// Uses user-copy for both (could be optimized with split zero-copy).
+func (w *ioWorker) cowReadMixed(_ uint32, offset int64, length int, tag uint16) int32 {
+	if length > len(w.scratchBuf) {
+		log.Printf("Queue %d Tag %d: COW length %d > scratch buffer", w.qid, tag, length)
+		return IOResultEIO
+	}
+
+	buf := w.scratchBuf[:length]
+
+	// Use the regular ReadAt which handles mixed reads
+	n, err := w.cowBackend.ReadAt(buf, offset)
+	if err != nil {
+		log.Printf("Queue %d Tag %d: COW mixed read failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+	if n < length {
+		for i := n; i < length; i++ {
+			buf[i] = 0
+		}
+	}
+
+	// Write to ublk buffer (user-copy)
+	bufOffset := int64(tag) * int64(w.ioBufBytes)
+	_, err = w.device.charDevFD.WriteAt(buf, bufOffset)
+	if err != nil {
+		log.Printf("Queue %d Tag %d: COW pwrite failed: %v", w.qid, tag, err)
+		return IOResultEIO
+	}
+
+	return IOResultOK
+}
+
+// cowFixedIO performs fixed I/O to overlay via io_uring.
+func (w *ioWorker) cowFixedIO(op uint8, offset int64, length int, bufIndex uint16) int32 {
+	sqe, err := w.zcRing.GetSQE()
+	if err != nil {
+		return IOResultEIO
+	}
+
+	switch op {
+	case UBLK_IO_OP_READ:
+		sqe.Opcode = IORING_OP_READ_FIXED
+	case UBLK_IO_OP_WRITE:
+		sqe.Opcode = IORING_OP_WRITE_FIXED
+	default:
+		return IOResultEIO
+	}
+
+	sqe.Fd = 0 // Fixed file index 0 (overlay)
+	sqe.Off = uint64(offset)
+	sqe.Len = uint32(length)
+	sqe.BufIndex = bufIndex
+	sqe.Flags = IOSQE_FIXED_FILE
+	sqe.UserData = uint64(bufIndex)
+
+	// Submit and wait
+	if _, err := w.zcRing.Submit(); err != nil {
+		return IOResultEIO
+	}
+
+	cqe, err := w.zcRing.WaitCQE()
+	if err != nil {
+		return IOResultEIO
+	}
+
+	res := cqe.Res
+	w.zcRing.SeenCQE(cqe)
+
+	if res < 0 {
+		return IOResultEIO
+	}
+
+	return IOResultOK
 }
 
 func (w *ioWorker) submitAutoZeroCopyIO(op uint8, flags uint32, offset int64, length int, tag uint16) error {
