@@ -439,13 +439,13 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 	blockSize := w.device.blockSize()
 	if blockSize <= 0 {
 		log.Printf("Queue %d Tag %d: invalid block size %d", w.qid, tag, blockSize)
-		w.device.stats.recordOp(op, 0, false)
+		w.device.recordStats(op, 0, false)
 		return IOResultEIO, false
 	}
 
 	if desc.StartSector > uint64(math.MaxInt64)/blockSize {
 		log.Printf("Queue %d Tag %d: start sector %d overflows offset", w.qid, tag, desc.StartSector)
-		w.device.stats.recordOp(op, 0, false)
+		w.device.recordStats(op, 0, false)
 		return IOResultEIO, false
 	}
 
@@ -456,7 +456,7 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 	// Guard against buffer overflow
 	if length64 > uint64(^uint(0)) {
 		log.Printf("Queue %d Tag %d: IO length %d overflows int", w.qid, tag, length64)
-		w.device.stats.recordOp(op, 0, false)
+		w.device.recordStats(op, 0, false)
 		return IOResultEIO, false
 	}
 
@@ -465,25 +465,25 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 	if w.zeroCopy && (op == UBLK_IO_OP_READ || op == UBLK_IO_OP_WRITE) {
 		if w.autoBufReg {
 			if length == 0 {
-				w.device.stats.recordOp(op, 0, true)
+				w.device.recordStats(op, 0, true)
 				return IOResultOK, false
 			}
 			if err := w.submitAutoZeroCopyIO(op, desc.OpFlags, offset, length, tag); err != nil {
 				log.Printf("Queue %d Tag %d: auto zero-copy submit failed: %v", w.qid, tag, err)
-				w.device.stats.recordOp(op, uint64(length), false)
+				w.device.recordStats(op, uint64(length), false)
 				return IOResultEIO, false
 			}
 			return 0, true
 		}
 		res := w.executeZeroCopy(op, desc.OpFlags, offset, length, tag)
-		w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+		w.device.recordStats(op, uint64(length), res == IOResultOK)
 		return res, false
 	}
 
 	// COW backend: route based on dirty state
 	if w.cowBackend != nil && (op == UBLK_IO_OP_READ || op == UBLK_IO_OP_WRITE) {
 		res := w.executeCOW(op, desc.OpFlags, offset, length, tag)
-		w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+		w.device.recordStats(op, uint64(length), res == IOResultOK)
 		return res, false
 	}
 
@@ -492,7 +492,7 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 		if w.userCopy || w.zeroCopy {
 			if length > len(w.scratchBuf) {
 				log.Printf("Queue %d Tag %d: IO length %d > scratch buffer %d", w.qid, tag, length, len(w.scratchBuf))
-				w.device.stats.recordOp(op, uint64(length), false)
+				w.device.recordStats(op, uint64(length), false)
 				return IOResultEIO, false
 			}
 			buf = w.scratchBuf[:length]
@@ -500,13 +500,13 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 			tagIdx := int(tag)
 			if tagIdx >= len(w.tagBuffers) {
 				log.Printf("Queue %d Tag %d: tag buffer missing", w.qid, tag)
-				w.device.stats.recordOp(op, uint64(length), false)
+				w.device.recordStats(op, uint64(length), false)
 				return IOResultEIO, false
 			}
 			tagBuf := w.tagBuffers[tagIdx]
 			if length > len(tagBuf) {
 				log.Printf("Queue %d Tag %d: IO length %d > tag buffer %d", w.qid, tag, length, len(tagBuf))
-				w.device.stats.recordOp(op, uint64(length), false)
+				w.device.recordStats(op, uint64(length), false)
 				return IOResultEIO, false
 			}
 			buf = tagBuf[:length]
@@ -515,7 +515,7 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 
 	// Execute IO with USER_COPY handling
 	res := w.executeIO(op, desc.OpFlags, buf, offset, tag)
-	w.device.stats.recordOp(op, uint64(length), res == IOResultOK)
+	w.device.recordStats(op, uint64(length), res == IOResultOK)
 	return res, false
 }
 
@@ -797,7 +797,7 @@ func (w *ioWorker) finishAutoDataIO(tag uint16, cqeRes int32) int32 {
 		}
 	}
 
-	w.device.stats.recordOp(op, length, res == IOResultOK)
+	w.device.recordStats(op, length, res == IOResultOK)
 	return res
 }
 

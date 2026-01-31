@@ -52,10 +52,11 @@ type Device struct {
 	writeAt func([]byte, int64) (int, error)
 
 	// Feature flags
-	flags uint64
-	cow   bool // COW mode: zero-copy overlay + user-copy base
+	flags        uint64
+	cow          bool // COW mode: zero-copy overlay + user-copy base
+	disableStats bool // Skip statistics recording
 
-	// Statistics
+	// Statistics (only updated if !disableStats)
 	stats Stats
 
 	// Worker management
@@ -65,8 +66,19 @@ type Device struct {
 }
 
 // Stats returns the device's IO statistics.
+// Returns nil if stats collection is disabled.
 func (d *Device) Stats() *Stats {
+	if d.disableStats {
+		return nil
+	}
 	return &d.stats
+}
+
+// recordStats records an operation if stats collection is enabled.
+func (d *Device) recordStats(op uint8, bytes uint64, success bool) {
+	if !d.disableStats {
+		d.stats.recordOp(op, bytes, success)
+	}
 }
 
 // DeviceOption configures device creation.
@@ -118,6 +130,14 @@ func WithMaxIOBufBytes(size uint32) DeviceOption {
 func WithCOW() DeviceOption {
 	return func(d *Device) {
 		d.cow = true
+	}
+}
+
+// WithDisableStats disables per-operation statistics tracking.
+// This eliminates atomic counter overhead on every I/O operation.
+func WithDisableStats() DeviceOption {
+	return func(d *Device) {
+		d.disableStats = true
 	}
 }
 

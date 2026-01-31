@@ -96,6 +96,11 @@ type Config struct {
 	// MaxDiscardSegments is the maximum number of segments in a discard request (default: 1).
 	MaxDiscardSegments uint32
 
+	// DisableStats disables per-operation statistics tracking.
+	// When true, device.Stats() will return zero values.
+	// This eliminates atomic counter overhead on every I/O operation.
+	DisableStats bool
+
 	// COW enables copy-on-write mode.
 	// Requires a backend that implements COWBackend interface.
 	// When enabled:
@@ -310,6 +315,9 @@ func New(backend Backend, config Config) (*Device, error) {
 	}
 	if config.MaxIOBufBytes > 0 {
 		opts = append(opts, WithMaxIOBufBytes(config.MaxIOBufBytes))
+	}
+	if config.DisableStats {
+		opts = append(opts, WithDisableStats())
 	}
 	// Create device with backend and options
 	dev, err := NewDeviceWithBackend(backend, opts...)
