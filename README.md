@@ -14,7 +14,7 @@ This library allows you to create block devices in userspace by implementing sim
 ## Requirements
 
 - Linux kernel 6.0+ with ublk driver enabled
-- Go 1.23+
+- Go 1.25+
 - Root privileges (CAP_SYS_ADMIN) for creating block devices
 
 ## Installation

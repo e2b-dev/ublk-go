@@ -5,7 +5,7 @@ Thank you for your interest in contributing to ublk-go!
 ## Development Setup
 
 1. **Requirements**
-   - Go 1.23 or later
+   - Go 1.25 or later
    - Linux with kernel 6.0+ (ublk driver support)
    - Root privileges for integration tests
 
