@@ -12,7 +12,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -23,8 +22,9 @@ import (
 
 // MemfdBackend is a zero-copy backend using memfd (anonymous memory-backed file).
 // It implements FixedFileBackend for zero-copy io_uring operations.
+//
+// No locking needed: file I/O (pread/pwrite) is atomic at kernel level.
 type MemfdBackend struct {
-	mu   sync.RWMutex
 	file *os.File
 	size int64
 }
@@ -53,15 +53,11 @@ func NewMemfdBackend(size int64) (*MemfdBackend, error) {
 
 // ReadAt implements io.ReaderAt (required by Backend).
 func (b *MemfdBackend) ReadAt(p []byte, off int64) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 	return b.file.ReadAt(p, off)
 }
 
 // WriteAt implements io.WriterAt (required by Backend).
 func (b *MemfdBackend) WriteAt(p []byte, off int64) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	return b.file.WriteAt(p, off)
 }
 
