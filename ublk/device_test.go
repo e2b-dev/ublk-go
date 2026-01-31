@@ -193,32 +193,6 @@ func TestStartWorkersError(t *testing.T) {
 	}
 }
 
-func TestNewDevice(t *testing.T) {
-	// Setup mock control device
-	tmp, err := os.CreateTemp(t.TempDir(), "ublk-control")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tmp.Close()
-
-	// Override path
-	origPath := controlDevicePath
-	controlDevicePath = tmp.Name()
-	defer func() { controlDevicePath = origPath }()
-
-	d, err := NewDevice(
-		func(_ []byte, _ int64) (int, error) { return 0, nil },
-		func(_ []byte, _ int64) (int, error) { return 0, nil },
-	)
-	if err != nil {
-		t.Fatalf("NewDevice failed: %v", err)
-	}
-	if d.controlFD == nil {
-		t.Error("controlFD not set")
-	}
-	d.controlFD.Close() // cleanup
-}
-
 func TestNewDeviceWithBackend(t *testing.T) {
 	// Setup mock control device
 	tmp, err := os.CreateTemp(t.TempDir(), "ublk-control")
@@ -246,18 +220,13 @@ func TestNewDeviceWithBackend(t *testing.T) {
 	d.controlFD.Close() // cleanup
 }
 
-func TestNewDeviceError(t *testing.T) {
+func TestNewDeviceWithBackendError(t *testing.T) {
 	// Override path to non-existent file
 	origPath := controlDevicePath
 	controlDevicePath = "/non/existent/path"
 	defer func() { controlDevicePath = origPath }()
 
-	_, err := NewDevice(nil, nil)
-	if err == nil {
-		t.Error("Expected error for non-existent control device")
-	}
-
-	_, err = NewDeviceWithBackend(&MockBackend{})
+	_, err := NewDeviceWithBackend(&MockBackend{})
 	if err == nil {
 		t.Error("Expected error for non-existent control device")
 	}

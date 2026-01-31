@@ -10,6 +10,7 @@ Thank you for your interest in contributing to ublk-go!
    - Root privileges for integration tests
 
 2. **Clone and build**
+
    ```bash
    git clone https://github.com/e2b-dev/ublk-go.git
    cd ublk-go
@@ -17,6 +18,7 @@ Thank you for your interest in contributing to ublk-go!
    ```
 
 3. **Run tests**
+
    ```bash
    # Unit tests (no root required)
    make test
@@ -31,9 +33,11 @@ Thank you for your interest in contributing to ublk-go!
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
 4. Run tests and linters:
+
    ```bash
    make check
    ```
+
 5. Commit your changes with a clear message
 6. Push to your fork and create a Pull Request
 
@@ -47,6 +51,7 @@ Thank you for your interest in contributing to ublk-go!
 ## Commit Messages
 
 Use clear, descriptive commit messages:
+
 - `fix: correct buffer overflow check`
 - `feat: add support for discard operations`
 - `docs: update API documentation`

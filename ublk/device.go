@@ -141,26 +141,6 @@ func WithDisableStats() DeviceOption {
 	}
 }
 
-// NewDevice creates a new ublk device instance.
-// It opens the control device but does not create the ublk device yet.
-//
-// Deprecated: Use NewDeviceWithBackend for full functionality including Flush/Discard.
-func NewDevice(readAt func([]byte, int64) (int, error), writeAt func([]byte, int64) (int, error)) (*Device, error) {
-	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open control device: %w", err)
-	}
-
-	return &Device{
-		devID:     -1,
-		controlFD: controlFD,
-		readAt:    readAt,
-		writeAt:   writeAt,
-		flags:     UBLK_F_CMD_IOCTL_ENCODE,
-		stopCh:    make(chan struct{}),
-	}, nil
-}
-
 // NewDeviceWithBackend creates a new ublk device instance with a Backend.
 // This allows support for extended operations like Flush and Discard.
 // Optional DeviceOption arguments can be passed to configure features like

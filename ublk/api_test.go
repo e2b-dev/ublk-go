@@ -233,9 +233,9 @@ func TestConfigValidation(t *testing.T) {
 func TestDeviceLifecycle(t *testing.T) {
 	backend := NewTestBackend(1024)
 
-	dev, err := NewDevice(backend.ReadAt, backend.WriteAt)
+	dev, err := NewDeviceWithBackend(backend)
 	if err != nil {
-		t.Logf("NewDevice error (expected without kernel): %v", err)
+		t.Logf("NewDeviceWithBackend error (expected without kernel): %v", err)
 		return
 	}
 
