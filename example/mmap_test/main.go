@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/ublk-go/ublk/ublk"
+	"github.com/e2b-dev/ublk-go/ublk"
 )
 
 const (

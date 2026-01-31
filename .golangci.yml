@@ -9,7 +9,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/ublk-go/ublk)
+        - prefix(github.com/e2b-dev/ublk-go)
 
 linters:
   default: all

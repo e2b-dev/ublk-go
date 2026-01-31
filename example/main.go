@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ublk-go/ublk/ublk"
+	"github.com/e2b-dev/ublk-go/ublk"
 )
 
 // MemoryBackend is a thread-safe in-memory storage backend.

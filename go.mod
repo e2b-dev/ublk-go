@@ -1,4 +1,4 @@
-module github.com/ublk-go/ublk
+module github.com/e2b-dev/ublk-go
 
 go 1.25.6
 

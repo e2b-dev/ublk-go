@@ -11,7 +11,7 @@ Thank you for your interest in contributing to ublk-go!
 
 2. **Clone and build**
    ```bash
-   git clone https://github.com/ublk-go/ublk.git
+   git clone https://github.com/e2b-dev/ublk-go.git
    cd ublk-go
    make build
    ```

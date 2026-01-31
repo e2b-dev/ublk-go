@@ -1,8 +1,9 @@
 # ublk-go
 
-[![Go](https://github.com/ublk-go/ublk/actions/workflows/go.yml/badge.svg)](https://github.com/ublk-go/ublk/actions/workflows/go.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/ublk-go/ublk.svg)](https://pkg.go.dev/github.com/ublk-go/ublk)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ublk-go/ublk)](https://goreportcard.com/report/github.com/ublk-go/ublk)
+[![Go Build](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go/ublk)
+[![Go Report Card](https://goreportcard.com/badge/github.com/e2b-dev/ublk-go)](https://goreportcard.com/report/github.com/e2b-dev/ublk-go)
+[![codecov](https://codecov.io/gh/e2b-dev/ublk-go/graph/badge.svg)](https://codecov.io/gh/e2b-dev/ublk-go)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A pure Go implementation of the Linux ublk (userspace block device) driver.
@@ -20,7 +21,7 @@ This library allows you to create block devices in userspace by implementing sim
 ## Installation
 
 ```bash
-go get github.com/ublk-go/ublk
+go get github.com/e2b-dev/ublk-go/ublk
 ```
 
 ## Quick Start
@@ -31,7 +32,7 @@ package main
 import (
     "fmt"
     
-    "github.com/ublk-go/ublk/ublk"
+    "github.com/e2b-dev/ublk-go/ublk"
 )
 
 // Implement the Backend interface
