@@ -19,7 +19,13 @@ This library allows you to create block devices in userspace by implementing sim
 ## Installation
 
 ```bash
-go get github.com/e2b-dev/ublk-go/ublk
+go get github.com/e2b-dev/ublk-go
+```
+
+Then import in your code:
+
+```go
+import "github.com/e2b-dev/ublk-go/ublk"
 ```
 
 ## Quick Start
