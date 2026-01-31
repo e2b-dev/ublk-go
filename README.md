@@ -144,22 +144,36 @@ type FixedFileBackend interface {
 - `Stop() error` - Stops the device
 - `Delete() error` - Removes the device
 
-## Example
-
-See `example/main.go` for a complete example with an in-memory backend.
-
 ## Status
 
 Pure Go implementation using direct io_uring syscalls. No CGO required.
 
 See [BUILD.md](BUILD.md) for build instructions and [ARCHITECTURE.md](ARCHITECTURE.md) for design details.
 
+## Examples
+
+- `example/main.go` - Basic in-memory backend
+- `example/zerocopy/` - Zero-copy backend using memfd
+- `example/cow_overlay/` - Copy-on-write overlay with shared base image
+- `example/mmap_test/` - Memory-mapped device testing
+
 ## References
 
-- [Linux ublk documentation](https://docs.kernel.org/block/ublk.html)
-- [ublksrv reference implementation](https://github.com/ublk-org/ublksrv)
-- [libublk-rs Rust implementation](https://github.com/ublk-org/libublk-rs)
+### ublk
+
+- [Linux ublk kernel documentation](https://docs.kernel.org/block/ublk.html)
+- [ublksrv - C reference implementation](https://github.com/ublk-org/ublksrv)
+- [libublk-rs - Rust implementation](https://github.com/ublk-org/libublk-rs)
+- [LWN: User-space block drivers](https://lwn.net/Articles/903855/)
 - [LWN: Zero-copy I/O for ublk](https://lwn.net/Articles/926118/)
+- [Kernel source: ublk_cmd.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/ublk_cmd.h)
+
+### io_uring
+
+- [io_uring man page](https://man7.org/linux/man-pages/man7/io_uring.7.html)
+- [Lord of the io_uring guide](https://unixism.net/loti/)
+- [Kernel source: io_uring.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h)
+- [What's new in io_uring (PDF)](https://kernel.dk/io_uring-whatsnew.pdf)
 
 ## Contributing
 
