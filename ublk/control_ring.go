@@ -41,9 +41,9 @@ func (r *controlRing) submitCmd(ctrlFd int, cmdOp uint32, cmd *UblksrvCtrlCmd) (
 	sqe.Opcode = IORING_OP_URING_CMD
 	sqe.Fd = int32(ctrlFd)
 	sqe.Off = uint64(cmdOp) // cmd_op is in lower 32 bits of off field
-	sqe.Len = uint32(unsafe.Sizeof(*cmd))
+	// Note: sqe.Len is not used by ublk for control commands
 
-	// Copy command data to the extended area
+	// Copy command data to the extended area (sqe->cmd[])
 	cmdBytes := (*[unsafe.Sizeof(UblksrvCtrlCmd{})]byte)(unsafe.Pointer(cmd))[:]
 	copy(sqe.Cmd[:], cmdBytes)
 

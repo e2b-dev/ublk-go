@@ -267,15 +267,6 @@ func main() {
 		log.Fatal("FAIL: Large write verification failed")
 	}
 	log.Println("SUCCESS: Large write verified")
-
-	// Print final stats
-	stats := dev.Stats().Snapshot()
-	log.Println("\n=== Final Stats ===")
-	log.Printf("Reads:  %d (%d bytes)", stats.Reads, stats.BytesRead)
-	log.Printf("Writes: %d (%d bytes)", stats.Writes, stats.BytesWritten)
-	log.Printf("Errors: read=%d write=%d other=%d",
-		stats.ReadErrors, stats.WriteErrors, stats.OtherErrors)
-
 	log.Println("\nAll mmap tests passed!")
 
 	cleanupIO()

@@ -32,6 +32,26 @@ func init() {
 	}
 }
 
+func requireRoot(t *testing.T) {
+	t.Helper()
+	if os.Getuid() != 0 {
+		t.Skip("Integration tests require root")
+	}
+}
+
+func createTestDevice(t *testing.T, size int64, nrQueues, queueDepth uint16) (*Device, error) {
+	t.Helper()
+	backend := newIntegrationBackend(size)
+
+	config := DefaultConfig()
+	config.Size = uint64(size)
+	config.BlockSize = 512
+	config.NrHWQueues = nrQueues
+	config.QueueDepth = queueDepth
+
+	return New(backend, config)
+}
+
 // integrationBackend is a thread-safe in-memory backend for integration tests.
 type integrationBackend struct {
 	mu   sync.RWMutex
@@ -243,11 +263,6 @@ func TestIntegrationMmapReadWrite(t *testing.T) {
 		throughput := float64(largeSize) / elapsed.Seconds() / (1024 * 1024)
 		t.Logf("Large write: %d bytes in %v (%.2f MB/s)", largeSize, elapsed, throughput)
 	})
-
-	// Print stats
-	stats := dev.Stats().Snapshot()
-	t.Logf("Stats: reads=%d writes=%d errors=%d",
-		stats.Reads, stats.Writes, stats.ReadErrors+stats.WriteErrors+stats.OtherErrors)
 }
 
 // TestIntegrationDirectIO tests direct I/O (bypassing page cache).
@@ -425,10 +440,6 @@ func TestIntegrationConcurrentIO(t *testing.T) {
 			t.Fatal("Too many errors, stopping")
 		}
 	}
-
-	stats := dev.Stats().Snapshot()
-	t.Logf("Concurrent I/O stats: reads=%d writes=%d errors=%d",
-		stats.Reads, stats.Writes, stats.ReadErrors+stats.WriteErrors+stats.OtherErrors)
 
 	if errCount == 0 {
 		t.Log("Concurrent I/O test passed")
@@ -762,7 +773,6 @@ func TestIntegrationStress(t *testing.T) {
 	close(stopCh)
 	wg.Wait()
 
-	stats := dev.Stats().Snapshot()
 	opsPerSec := float64(totalOps) / duration.Seconds()
 
 	t.Logf("Stress test completed:")
@@ -770,7 +780,6 @@ func TestIntegrationStress(t *testing.T) {
 	t.Logf("  Workers: %d", numWorkers)
 	t.Logf("  Total ops: %d (%.0f ops/sec)", totalOps, opsPerSec)
 	t.Logf("  Errors: %d", totalErrors)
-	t.Logf("  Stats: reads=%d writes=%d", stats.Reads, stats.Writes)
 
 	if totalErrors > 0 {
 		t.Errorf("Stress test had %d errors", totalErrors)

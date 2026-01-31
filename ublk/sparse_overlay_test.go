@@ -5,371 +5,202 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSparseOverlay_ClassifyRange(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
-
-	s, err := NewSparseOverlay(path, 1024*1024) // 1MB
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 1024*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Initially everything is clean
+	// Initially all clean
 	allDirty, allClean := s.ClassifyRange(0, 4096)
-	if !allClean || allDirty {
-		t.Errorf("expected allClean for empty overlay, got allDirty=%v allClean=%v", allDirty, allClean)
-	}
+	assert.False(t, allDirty)
+	assert.True(t, allClean)
 
-	// Write some data
+	// Write data
 	data := make([]byte, 4096)
-	for i := range data {
-		data[i] = byte(i)
-	}
-	if _, err := s.WriteAt(data, 0); err != nil {
-		t.Fatalf("WriteAt: %v", err)
-	}
+	_, err = s.WriteAt(data, 0)
+	require.NoError(t, err)
 
-	// Now the written range should be dirty
+	// Written range is dirty
 	allDirty, allClean = s.ClassifyRange(0, 4096)
-	if !allDirty || allClean {
-		t.Errorf("expected allDirty for written range, got allDirty=%v allClean=%v", allDirty, allClean)
-	}
+	assert.True(t, allDirty)
+	assert.False(t, allClean)
 
-	// Range after written data should be clean
+	// Unwritten range is clean
 	allDirty, allClean = s.ClassifyRange(8192, 4096)
-	if !allClean || allDirty {
-		t.Errorf("expected allClean for unwritten range, got allDirty=%v allClean=%v", allDirty, allClean)
-	}
+	assert.False(t, allDirty)
+	assert.True(t, allClean)
 
-	// Range spanning dirty and clean should be mixed
+	// Spanning range is mixed
 	allDirty, allClean = s.ClassifyRange(0, 8192)
-	if allDirty || allClean {
-		t.Errorf("expected mixed for spanning range, got allDirty=%v allClean=%v", allDirty, allClean)
-	}
+	assert.False(t, allDirty)
+	assert.False(t, allClean)
 }
 
 func TestSparseOverlay_DirtyExtents(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
-
-	s, err := NewSparseOverlay(path, 1024*1024)
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 1024*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Write at two separate locations
 	data := make([]byte, 4096)
-	if _, err := s.WriteAt(data, 0); err != nil {
-		t.Fatalf("WriteAt 0: %v", err)
-	}
-	if _, err := s.WriteAt(data, 100*4096); err != nil {
-		t.Fatalf("WriteAt 100*4096: %v", err)
-	}
+	_, err = s.WriteAt(data, 0)
+	require.NoError(t, err)
+	_, err = s.WriteAt(data, 100*4096)
+	require.NoError(t, err)
 
-	// Count extents
 	count := 0
 	for range s.DirtyExtents() {
 		count++
 	}
-	// Note: actual count depends on filesystem behavior with sparse files
-	// At minimum, we should have at least 1 extent
-	if count < 1 {
-		t.Errorf("expected at least 1 dirty extent, got %d", count)
-	}
+	assert.GreaterOrEqual(t, count, 1)
 }
 
 func TestSparseOverlay_ExportDiff(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
-
-	s, err := NewSparseOverlay(path, 64*1024) // 64KB
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 64*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Write some data
-	data := []byte("hello world")
-	if _, err := s.WriteAt(data, 1000); err != nil {
-		t.Fatalf("WriteAt: %v", err)
-	}
+	_, err = s.WriteAt([]byte("hello world"), 1000)
+	require.NoError(t, err)
 
-	// Export diff
 	var buf bytes.Buffer
-	if err := s.ExportDiff(&buf); err != nil {
-		t.Fatalf("ExportDiff: %v", err)
-	}
-
-	// Should have exported something
-	if buf.Len() == 0 {
-		t.Error("ExportDiff produced no output")
-	}
+	require.NoError(t, s.ExportDiff(&buf))
+	assert.NotZero(t, buf.Len())
 }
 
 func TestSparseOverlay_FromFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
+	f, err := os.Create(filepath.Join(t.TempDir(), "overlay"))
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(4096))
 
-	// Create file manually
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if err := f.Truncate(4096); err != nil {
-		f.Close()
-		t.Fatalf("Truncate: %v", err)
-	}
-
-	// Wrap it
 	s := NewSparseOverlayFromFile(f, 4096)
-
-	// Should work
-	if s.Size() != 4096 {
-		t.Errorf("Size() = %d, want 4096", s.Size())
-	}
-
+	assert.Equal(t, int64(4096), s.Size())
 	s.Close()
 }
 
 func TestSparseOverlay_SegmentRange(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
-
-	// 64KB overlay with 4KB blocks
-	size := int64(64 * 1024)
-	s, err := NewSparseOverlay(path, size)
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 64*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Write blocks 1 and 2 (skip block 0)
-	data := make([]byte, 8192)
-	if _, err := s.WriteAt(data, 4096); err != nil {
-		t.Fatalf("WriteAt: %v", err)
-	}
+	// Write blocks 1-2 (skip block 0)
+	_, err = s.WriteAt(make([]byte, 8192), 4096)
+	require.NoError(t, err)
 
-	// Segment range [0, 16384) should have:
-	// - block 0: clean (base)
-	// - blocks 1-2: dirty (overlay)
-	// - block 3: clean (base)
 	segments := make([]Segment, 0, 4)
 	for seg := range s.SegmentRange(0, 16384) {
 		segments = append(segments, seg)
 	}
+	assert.GreaterOrEqual(t, len(segments), 2)
 
-	// Expect at least 2 segments (may vary by filesystem)
-	if len(segments) < 2 {
-		t.Errorf("expected at least 2 segments, got %d", len(segments))
-	}
-
-	// First segment should be from base (clean)
-	if len(segments) > 0 && !segments[0].FromBase {
-		// Actually, this depends on filesystem - block 0 might be hole
-		// Just verify we got segments
-		t.Logf("first segment: offset=%d len=%d fromBase=%v", segments[0].Offset, segments[0].Length, segments[0].FromBase)
-	}
-
-	// Verify total length
 	var totalLen int64
 	for _, seg := range segments {
 		totalLen += seg.Length
 	}
-	if totalLen != 16384 {
-		t.Errorf("total segment length = %d, want 16384", totalLen)
-	}
-
-	// Verify BufOff is sequential
-	expectedBufOff := int64(0)
-	for i, seg := range segments {
-		if seg.BufOff != expectedBufOff {
-			t.Errorf("segment %d: BufOff = %d, want %d", i, seg.BufOff, expectedBufOff)
-		}
-		expectedBufOff += seg.Length
-	}
+	assert.Equal(t, int64(16384), totalLen)
 }
 
 func TestSegmentRangeFromBitmap(t *testing.T) {
 	blockSize := int64(4096)
-
-	// Create dirty bitmap: blocks 0,1 clean, 2,3,4 dirty, 5 clean
 	dirtyBlocks := map[int64]bool{2: true, 3: true, 4: true}
-	isDirty := func(idx int64) bool { return dirtyBlocks[idx] }
 
-	// Segment range covering blocks 0-5
-	segments := make([]Segment, 0, 3) // expect 3 segments
-	for seg := range SegmentRangeFromBitmap(0, 6*blockSize, blockSize, isDirty) {
+	segments := make([]Segment, 0, 3)
+	for seg := range SegmentRangeFromBitmap(0, 6*blockSize, blockSize, func(idx int64) bool { return dirtyBlocks[idx] }) {
 		segments = append(segments, seg)
 	}
 
-	// Expect 3 segments:
-	// 1. blocks 0-1: clean
-	// 2. blocks 2-4: dirty
-	// 3. block 5: clean
-	if len(segments) != 3 {
-		t.Errorf("expected 3 segments, got %d", len(segments))
-		for i, seg := range segments {
-			t.Logf("  segment %d: offset=%d len=%d fromBase=%v", i, seg.Offset, seg.Length, seg.FromBase)
-		}
-		return
-	}
-
+	require.Len(t, segments, 3)
 	// Segment 0: clean, blocks 0-1
-	if segments[0].Offset != 0 || segments[0].Length != 2*blockSize || !segments[0].FromBase {
-		t.Errorf("segment 0: got offset=%d len=%d fromBase=%v, want 0/%d/true",
-			segments[0].Offset, segments[0].Length, segments[0].FromBase, 2*blockSize)
-	}
-
+	assert.Equal(t, int64(0), segments[0].Offset)
+	assert.Equal(t, 2*blockSize, segments[0].Length)
+	assert.True(t, segments[0].FromBase)
 	// Segment 1: dirty, blocks 2-4
-	if segments[1].Offset != 2*blockSize || segments[1].Length != 3*blockSize || segments[1].FromBase {
-		t.Errorf("segment 1: got offset=%d len=%d fromBase=%v, want %d/%d/false",
-			segments[1].Offset, segments[1].Length, segments[1].FromBase, 2*blockSize, 3*blockSize)
-	}
-
+	assert.Equal(t, 2*blockSize, segments[1].Offset)
+	assert.Equal(t, 3*blockSize, segments[1].Length)
+	assert.False(t, segments[1].FromBase)
 	// Segment 2: clean, block 5
-	if segments[2].Offset != 5*blockSize || segments[2].Length != blockSize || !segments[2].FromBase {
-		t.Errorf("segment 2: got offset=%d len=%d fromBase=%v, want %d/%d/true",
-			segments[2].Offset, segments[2].Length, segments[2].FromBase, 5*blockSize, blockSize)
-	}
+	assert.Equal(t, 5*blockSize, segments[2].Offset)
+	assert.Equal(t, blockSize, segments[2].Length)
+	assert.True(t, segments[2].FromBase)
 }
 
 func TestSparseOverlay_ReadMixed(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "overlay")
-
-	size := int64(16 * 1024) // 16KB
-	s, err := NewSparseOverlay(path, size)
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 16*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Write "OVERLAY" at offset 4096
-	overlayData := []byte("OVERLAY!")
-	if _, err := s.WriteAt(overlayData, 4096); err != nil {
-		t.Fatalf("WriteAt overlay: %v", err)
-	}
+	_, err = s.WriteAt([]byte("OVERLAY!"), 4096)
+	require.NoError(t, err)
 
-	// Create a "base" with "BASE" pattern
 	baseData := bytes.Repeat([]byte("BASE"), 4096)
-
-	// Read mixed range
 	buf := make([]byte, 8192)
 	n, err := s.ReadMixed(buf, 0, bytes.NewReader(baseData))
-	if err != nil {
-		t.Fatalf("ReadMixed: %v", err)
-	}
-	if n != 8192 {
-		t.Errorf("ReadMixed returned %d bytes, want 8192", n)
-	}
-
-	// First 4096 bytes should be from base (zeros, since base is smaller)
-	// Or we get "BASE" pattern from our bytes.Reader
-	// Bytes 4096-4103 should be "OVERLAY!"
-
-	// Check overlay portion
-	got := string(buf[4096 : 4096+len(overlayData)])
-	if got != "OVERLAY!" {
-		t.Errorf("overlay portion = %q, want %q", got, "OVERLAY!")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 8192, n)
+	assert.Equal(t, "OVERLAY!", string(buf[4096:4096+8]))
 }
 
 func TestSparseOverlay_ReadMixedVectored(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create base file with pattern
-	basePath := filepath.Join(dir, "base")
-	baseFile, err := os.Create(basePath)
-	if err != nil {
-		t.Fatalf("Create base: %v", err)
-	}
+	// Create base file
+	baseFile, err := os.Create(filepath.Join(dir, "base"))
+	require.NoError(t, err)
 	defer baseFile.Close()
-
-	// Write "BASEBASE..." pattern to base
-	basePattern := bytes.Repeat([]byte("BASE"), 4096) // 16KB
-	if _, err := baseFile.Write(basePattern); err != nil {
-		t.Fatalf("Write base: %v", err)
-	}
+	_, err = baseFile.Write(bytes.Repeat([]byte("BASE"), 4096))
+	require.NoError(t, err)
 
 	// Create overlay
-	overlayPath := filepath.Join(dir, "overlay")
-	size := int64(16 * 1024) // 16KB
-	s, err := NewSparseOverlay(overlayPath, size)
-	if err != nil {
-		t.Fatalf("NewSparseOverlay: %v", err)
-	}
+	s, err := NewSparseOverlay(filepath.Join(dir, "overlay"), 16*1024)
+	require.NoError(t, err)
 	defer s.Close()
 
-	// Write "DIRTY!!!" at offset 4096 (block 1)
-	dirtyData := []byte("DIRTY!!!")
-	if _, err := s.WriteAt(dirtyData, 4096); err != nil {
-		t.Fatalf("WriteAt overlay: %v", err)
-	}
+	_, err = s.WriteAt([]byte("DIRTY!!!"), 4096)
+	require.NoError(t, err)
 
-	// Read mixed range using vectored I/O
 	buf := make([]byte, 8192)
 	n, err := s.ReadMixedVectored(buf, 0, int(baseFile.Fd()))
-	if err != nil {
-		t.Fatalf("ReadMixedVectored: %v", err)
-	}
-	if n != 8192 {
-		t.Errorf("ReadMixedVectored returned %d bytes, want 8192", n)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 8192, n)
+	assert.Equal(t, "BASE", string(buf[0:4]))
+	assert.Equal(t, "DIRTY!!!", string(buf[4096:4096+8]))
+}
 
-	// First 4 bytes should be "BASE" from base file
-	if string(buf[0:4]) != "BASE" {
-		t.Errorf("base portion = %q, want %q", string(buf[0:4]), "BASE")
-	}
+func TestSparseOverlay_IsZeroRegion(t *testing.T) {
+	s, err := NewSparseOverlay(filepath.Join(t.TempDir(), "overlay"), 64*1024)
+	require.NoError(t, err)
+	defer s.Close()
 
-	// Bytes 4096-4103 should be "DIRTY!!!" from overlay
-	got := string(buf[4096 : 4096+len(dirtyData)])
-	if got != "DIRTY!!!" {
-		t.Errorf("overlay portion = %q, want %q", got, "DIRTY!!!")
-	}
+	assert.True(t, s.IsZeroRegion(0, 4096), "unwritten region should be zero")
+	assert.True(t, s.IsZeroRegion(0, 64*1024), "entire file should be zero")
+
+	_, err = s.WriteAt([]byte("data"), 4096)
+	require.NoError(t, err)
+
+	assert.False(t, s.IsZeroRegion(4096, 4), "written region should not be zero")
+	assert.True(t, s.IsZeroRegion(0, 4096), "before write should still be zero")
+	assert.True(t, s.IsZeroRegion(8192, 4096), "after write should still be zero")
+	assert.False(t, s.IsZeroRegion(0, 8192), "mixed region should not be zero")
 }
 
 func TestPreadvContiguousGroups(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "testfile")
-
-	// Create file with known content
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	f, err := os.Create(filepath.Join(t.TempDir(), "testfile"))
+	require.NoError(t, err)
 	defer f.Close()
 
-	// Write: "AAAABBBBCCCCDDDD" (4 bytes each)
-	content := []byte("AAAABBBBCCCCDDDD")
-	if _, err := f.Write(content); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	_, err = f.WriteString("AAAABBBBCCCCDDDD")
+	require.NoError(t, err)
 
-	// Read non-contiguous: bytes 0-3 (AAAA) and 8-11 (CCCC)
-	buf1 := make([]byte, 4)
-	buf2 := make([]byte, 4)
-
-	segs := []vectoredSegment{
-		{fileOffset: 0, bufSlice: buf1},
-		{fileOffset: 8, bufSlice: buf2},
-	}
+	buf1, buf2 := make([]byte, 4), make([]byte, 4)
+	segs := []vectoredSegment{{fileOffset: 0, bufSlice: buf1}, {fileOffset: 8, bufSlice: buf2}}
 
 	n, err := preadvContiguousGroups(int(f.Fd()), segs)
-	if err != nil {
-		t.Fatalf("preadvContiguousGroups: %v", err)
-	}
-	if n != 8 {
-		t.Errorf("read %d bytes, want 8", n)
-	}
-
-	if string(buf1) != "AAAA" {
-		t.Errorf("buf1 = %q, want %q", string(buf1), "AAAA")
-	}
-	if string(buf2) != "CCCC" {
-		t.Errorf("buf2 = %q, want %q", string(buf2), "CCCC")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 8, n)
+	assert.Equal(t, "AAAA", string(buf1))
+	assert.Equal(t, "CCCC", string(buf2))
 }

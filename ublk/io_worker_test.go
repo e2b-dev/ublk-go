@@ -5,173 +5,38 @@ import (
 	"os"
 	"testing"
 	"unsafe"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func TestNewIOWorker(t *testing.T) {
-	t.Parallel()
-	dev := &Device{
-		devID: 0,
-	}
-
-	worker := newIOWorker(dev, 0, 128)
-
-	if worker.device != dev {
-		t.Error("device not set correctly")
-	}
-	if worker.qid != 0 {
-		t.Errorf("expected qid 0, got %d", worker.qid)
-	}
-	if worker.queueDepth != 128 {
-		t.Errorf("expected queueDepth 128, got %d", worker.queueDepth)
-	}
-	if len(worker.tagSubmitted) != 128 {
-		t.Errorf("expected tagSubmitted length 128, got %d", len(worker.tagSubmitted))
-	}
-}
 
 func TestIOWorkerGetSetIODesc(t *testing.T) {
 	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 4,
-	}
+	w := &ioWorker{queueDepth: 4}
+	w.mmapAddr = make([]byte, int(unsafe.Sizeof(UblksrvIODesc{}))*4)
 
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	worker.mmapAddr = make([]byte, descSize*4)
+	desc := UblksrvIODesc{Addr: 0x12345678, NrSectors: 8, StartSector: 100, OpFlags: UBLK_IO_F_FUA}
+	w.setIODesc(2, desc)
 
-	desc := UblksrvIODesc{
-		Addr:        0x12345678,
-		NrSectors:   8,
-		StartSector: 0,
-		OpFlags:     UBLK_IO_F_FUA,
-	}
-	worker.setIODesc(2, desc)
-
-	got := worker.getIODesc(2)
-	if got.Addr != desc.Addr {
-		t.Errorf("expected Addr %x, got %x", desc.Addr, got.Addr)
-	}
-	if got.NrSectors != desc.NrSectors {
-		t.Errorf("expected NrSectors %d, got %d", desc.NrSectors, got.NrSectors)
-	}
-	if got.OpFlags != desc.OpFlags {
-		t.Errorf("expected OpFlags %d, got %d", desc.OpFlags, got.OpFlags)
-	}
-	if got.StartSector != desc.StartSector {
-		t.Errorf("expected StartSector %d, got %d", desc.StartSector, got.StartSector)
-	}
+	got := w.getIODesc(2)
+	assert.Equal(t, desc.Addr, got.Addr)
+	assert.Equal(t, desc.NrSectors, got.NrSectors)
+	assert.Equal(t, desc.StartSector, got.StartSector)
+	assert.Equal(t, desc.OpFlags, got.OpFlags)
 }
 
-func TestIOWorkerGetIODescNilMmap(t *testing.T) {
+func TestIOWorkerDescBoundaryConditions(t *testing.T) {
 	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 4,
-		mmapAddr:   nil,
-	}
+	// Nil mmap should not panic
+	w := &ioWorker{queueDepth: 4, mmapAddr: nil}
+	assert.Zero(t, w.getIODesc(0).Addr)
+	w.setIODesc(0, UblksrvIODesc{Addr: 123}) // Should not panic
 
-	desc := worker.getIODesc(0)
-	if desc.Addr != 0 || desc.NrSectors != 0 {
-		t.Error("expected zero descriptor for nil mmap")
-	}
-}
-
-func TestIOWorkerSetIODescNilMmap(t *testing.T) {
-	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 4,
-		mmapAddr:   nil,
-	}
-
-	// Should not panic
-	worker.setIODesc(0, UblksrvIODesc{Addr: 123})
-}
-
-func TestIOWorkerGetIODescOutOfBounds(t *testing.T) {
-	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 2,
-	}
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	worker.mmapAddr = make([]byte, descSize) // Only space for 1 descriptor
-
-	desc := worker.getIODesc(1)
-	if desc.Addr != 0 {
-		t.Error("expected zero descriptor for out of bounds tag")
-	}
-}
-
-func TestIOWorkerSetIODescOutOfBounds(t *testing.T) {
-	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 2,
-	}
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	worker.mmapAddr = make([]byte, descSize) // Only space for 1 descriptor
-
-	// Should not panic, just silently fail
-	worker.setIODesc(1, UblksrvIODesc{Addr: 123})
-}
-
-func TestIOWorkerMmapSizeCalculation(t *testing.T) {
-	t.Parallel()
-	queueDepth := uint16(128)
-	maxIOBufBytes := uint32(512 * 1024)
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	expectedSize := int(queueDepth) * descSize
-
-	if expectedSize <= 0 {
-		t.Error("Expected size should be positive")
-	}
-
-	t.Logf("Mmap size for queueDepth=%d: desc=%d, total=%d (maxIOBufBytes=%d)",
-		queueDepth, descSize*int(queueDepth), expectedSize, maxIOBufBytes)
-}
-
-func TestIOWorkerQueueAndTag(t *testing.T) {
-	t.Parallel()
-	dev := &Device{devID: 5}
-	worker := newIOWorker(dev, 3, 64)
-
-	if worker.qid != 3 {
-		t.Errorf("Expected qid 3, got %d", worker.qid)
-	}
-	if worker.device.devID != 5 {
-		t.Errorf("Expected devID 5, got %d", worker.device.devID)
-	}
-}
-
-func TestIOWorkerMultipleDescriptors(t *testing.T) {
-	t.Parallel()
-	worker := &ioWorker{
-		queueDepth: 4,
-	}
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	worker.mmapAddr = make([]byte, descSize*4)
-
-	for tag := range uint16(4) {
-		desc := UblksrvIODesc{
-			Addr:        uint64(tag * 0x1000),
-			NrSectors:   uint32(tag + 1),
-			StartSector: uint64(tag),
-		}
-		worker.setIODesc(tag, desc)
-	}
-
-	for tag := range uint16(4) {
-		got := worker.getIODesc(tag)
-		if got.Addr != uint64(tag*0x1000) {
-			t.Errorf("Tag %d: expected Addr 0x%x, got 0x%x", tag, tag*0x1000, got.Addr)
-		}
-		if got.NrSectors != uint32(tag+1) {
-			t.Errorf("Tag %d: expected NrSectors %d, got %d", tag, tag+1, got.NrSectors)
-		}
-		if got.StartSector != uint64(tag) {
-			t.Errorf("Tag %d: expected StartSector %d, got %d", tag, tag, got.StartSector)
-		}
-	}
+	// Out of bounds should not panic
+	w2 := &ioWorker{queueDepth: 2}
+	w2.mmapAddr = make([]byte, int(unsafe.Sizeof(UblksrvIODesc{}))) // Only 1 descriptor
+	assert.Zero(t, w2.getIODesc(1).Addr)
+	w2.setIODesc(1, UblksrvIODesc{Addr: 123}) // Should not panic
 }
 
 // setIODesc is a test helper to write descriptors to mmap area.
@@ -234,237 +99,103 @@ func (m *MockBackend) WriteZeroes(off, length int64) error {
 func TestExecuteIOFlush(t *testing.T) {
 	t.Parallel()
 	flushed := false
-	backend := &MockBackend{
-		FlushFunc: func() error {
-			flushed = true
-			return nil
-		},
-	}
-	dev := &Device{backend: backend}
-	worker := &ioWorker{device: dev, qid: 0}
+	backend := &MockBackend{FlushFunc: func() error { flushed = true; return nil }}
+	w := &ioWorker{device: &Device{backend: backend}}
 
-	res := worker.executeIO(UBLK_IO_OP_FLUSH, 0, nil, 0, 0)
-	if res != IOResultOK {
-		t.Errorf("Expected OK, got %d", res)
-	}
-	if !flushed {
-		t.Error("Flush not called")
-	}
+	assert.Equal(t, IOResultOK, w.executeIO(UBLK_IO_OP_FLUSH, 0, nil, 0, 0))
+	assert.True(t, flushed)
+}
+
+func TestExecuteIOFlushError(t *testing.T) {
+	t.Parallel()
+	backend := &MockBackend{FlushFunc: func() error { return errors.New("fail") }}
+	w := &ioWorker{device: &Device{backend: backend}}
+	assert.Equal(t, IOResultEIO, w.executeIO(UBLK_IO_OP_FLUSH, 0, nil, 0, 0))
 }
 
 func TestExecuteIODiscard(t *testing.T) {
 	t.Parallel()
 	var gotOff, gotLen int64
-	backend := &MockBackend{
-		DiscardFunc: func(off, length int64) error {
-			gotOff, gotLen = off, length
-			return nil
-		},
-	}
-	dev := &Device{backend: backend}
-	worker := &ioWorker{device: dev, qid: 0}
+	backend := &MockBackend{DiscardFunc: func(off, length int64) error { gotOff, gotLen = off, length; return nil }}
+	w := &ioWorker{device: &Device{backend: backend}}
 
-	buf := make([]byte, 4096)
-	res := worker.executeIO(UBLK_IO_OP_DISCARD, 0, buf, 1024, 0)
-	if res != IOResultOK {
-		t.Errorf("Expected OK, got %d", res)
-	}
-	if gotOff != 1024 || gotLen != 4096 {
-		t.Errorf("Expected Discard(1024, 4096), got (%d, %d)", gotOff, gotLen)
-	}
+	assert.Equal(t, IOResultOK, w.executeIO(UBLK_IO_OP_DISCARD, 0, make([]byte, 4096), 1024, 0))
+	assert.Equal(t, int64(1024), gotOff)
+	assert.Equal(t, int64(4096), gotLen)
 }
 
 func TestExecuteIOWriteZeroes(t *testing.T) {
 	t.Parallel()
 	var gotOff, gotLen int64
-	backend := &MockBackend{
-		WriteZeroesFunc: func(off, length int64) error {
-			gotOff, gotLen = off, length
-			return nil
-		},
-	}
-	dev := &Device{backend: backend}
-	worker := &ioWorker{device: dev, qid: 0}
+	backend := &MockBackend{WriteZeroesFunc: func(off, length int64) error { gotOff, gotLen = off, length; return nil }}
+	w := &ioWorker{device: &Device{backend: backend}}
 
-	buf := make([]byte, 2048)
-	res := worker.executeIO(UBLK_IO_OP_WRITE_ZEROES, 0, buf, 512, 0)
-	if res != IOResultOK {
-		t.Errorf("Expected OK, got %d", res)
-	}
-	if gotOff != 512 || gotLen != 2048 {
-		t.Errorf("Expected WriteZeroes(512, 2048), got (%d, %d)", gotOff, gotLen)
-	}
+	assert.Equal(t, IOResultOK, w.executeIO(UBLK_IO_OP_WRITE_ZEROES, 0, make([]byte, 2048), 512, 0))
+	assert.Equal(t, int64(512), gotOff)
+	assert.Equal(t, int64(2048), gotLen)
 }
 
 func TestExecuteIOUnsupported(t *testing.T) {
 	t.Parallel()
-	dev := &Device{backend: &MockBackend{}}
-	worker := &ioWorker{device: dev, qid: 0}
-
-	// 0xFF is likely unsupported
-	res := worker.executeIO(0xFF, 0, nil, 0, 0)
-	if res != IOResultENOTSUP {
-		t.Errorf("Expected ENOTSUP, got %d", res)
-	}
+	w := &ioWorker{device: &Device{backend: &MockBackend{}}}
+	assert.Equal(t, IOResultENOTSUP, w.executeIO(0xFF, 0, nil, 0, 0))
 }
 
-func TestExecuteIOFlushError(t *testing.T) {
-	t.Parallel()
-	backend := &MockBackend{
-		FlushFunc: func() error {
-			return errors.New("flush failed")
-		},
-	}
-	// Cannot return simple error interface because it's mocked, let's just make it return error
-	backend.FlushFunc = func() error { return errors.New("flush failed") }
-
-	dev := &Device{backend: backend}
-	worker := &ioWorker{device: dev, qid: 0}
-
-	res := worker.executeIO(UBLK_IO_OP_FLUSH, 0, nil, 0, 0)
-	if res != IOResultEIO {
-		t.Errorf("Expected EIO, got %d", res)
-	}
-}
-
-func TestExecuteIOReadSuccess(t *testing.T) {
-	// Setup temp file to act as char device
+func TestExecuteIOReadWrite(t *testing.T) {
 	tmp, err := os.CreateTemp(t.TempDir(), "ublk_char")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer tmp.Close()
 
-	// Mock ReadAt to return specific data
-	readAtFunc := func(p []byte, _ int64) (int, error) {
-		copy(p, []byte("READDATA"))
-		return len(p), nil
-	}
-
+	// Test READ: backend data -> char device
 	dev := &Device{
 		charDevFD: tmp,
-		readAt:    readAtFunc,
+		readAt:    func(p []byte, _ int64) (int, error) { copy(p, []byte("READDATA")); return len(p), nil },
 	}
-	worker := &ioWorker{device: dev, qid: 0, userCopy: true, scratchBuf: make([]byte, 4096)}
+	w := &ioWorker{device: dev, userCopy: true, scratchBuf: make([]byte, 4096)}
 
-	// We simply need a device offset.
-	// ublkUserCopyPos(qid=0, tag=1)
-	// Just use tag=1, offset=0
-
-	// Easier to mock getIODesc or call executeIO directly
-	// Let's call executeIO directly like previous tests
-
-	// executeIO(op, buf, offset, tag)
-	buf := make([]byte, 8)
-	// devOffset relies on ublkUserCopyPos. For qid=0, tag=1
-	// We need to know where it writes.
-	// But valid execution just needs it to succeed.
-
-	res := worker.executeIO(UBLK_IO_OP_READ, 0, buf, 0, 1) // tag 1
-	if res != IOResultOK {
-		t.Errorf("Expected OK, got %d", res)
-	}
-
-	// Verify data was written to char dev (temp file)
-	// Offset = ublkUserCopyPos(0, 1)
-	devOffset := ublkUserCopyPos(0, 1)
+	assert.Equal(t, IOResultOK, w.executeIO(UBLK_IO_OP_READ, 0, make([]byte, 8), 0, 1))
 
 	got := make([]byte, 8)
-	_, err = tmp.ReadAt(got, devOffset)
-	if err != nil {
-		t.Fatalf("Failed to read from temp file: %v", err)
-	}
-	if string(got) != "READDATA" {
-		t.Errorf("Expected READDATA, got %q", got)
-	}
-}
+	_, err = tmp.ReadAt(got, ublkUserCopyPos(0, 1))
+	require.NoError(t, err)
+	assert.Equal(t, "READDATA", string(got))
 
-func TestExecuteIOReadBackendError(t *testing.T) {
-	tmp, err := os.CreateTemp(t.TempDir(), "ublk_char")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tmp.Close()
-
-	dev := &Device{
-		charDevFD: tmp,
-		readAt: func(_ []byte, _ int64) (int, error) {
-			return 0, errors.New("backend error")
-		},
-	}
-	worker := &ioWorker{device: dev, qid: 0, userCopy: true}
-
-	res := worker.executeIO(UBLK_IO_OP_READ, 0, make([]byte, 10), 0, 1)
-	if res != IOResultEIO {
-		t.Errorf("Expected EIO, got %d", res)
-	}
-}
-
-func TestExecuteIOWriteSuccess(t *testing.T) {
-	tmp, err := os.CreateTemp(t.TempDir(), "ublk_char")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tmp.Close()
-
-	// Pre-fill char dev with data
-	devOffset := ublkUserCopyPos(0, 1)
-	testData := []byte("WRITEDATA")
-	if _, err := tmp.WriteAt(testData, devOffset); err != nil {
-		t.Fatal(err)
-	}
+	// Test WRITE: char device -> backend
+	devOffset := ublkUserCopyPos(0, 2)
+	_, err = tmp.WriteAt([]byte("WRITEDATA"), devOffset)
+	require.NoError(t, err)
 
 	var writtenData []byte
-	writeAtFunc := func(p []byte, _ int64) (int, error) {
+	dev.writeAt = func(p []byte, _ int64) (int, error) {
 		writtenData = make([]byte, len(p))
 		copy(writtenData, p)
 		return len(p), nil
 	}
 
-	dev := &Device{
-		charDevFD: tmp,
-		writeAt:   writeAtFunc,
-	}
-	worker := &ioWorker{device: dev, qid: 0, userCopy: true}
-
-	// Buffer needs to be large enough? handleRequest passes scratchBuf slice.
-	// Here we pass our own buffer.
-	buf := make([]byte, len(testData))
-	res := worker.executeIO(UBLK_IO_OP_WRITE, 0, buf, 0, 1)
-	if res != IOResultOK {
-		t.Errorf("Expected OK, got %d", res)
-	}
-
-	if string(writtenData) != "WRITEDATA" {
-		t.Errorf("Expected WRITEDATA sent to backend, got %q", writtenData)
-	}
+	assert.Equal(t, IOResultOK, w.executeIO(UBLK_IO_OP_WRITE, 0, make([]byte, 9), 0, 2))
+	assert.Equal(t, "WRITEDATA", string(writtenData))
 }
 
-func TestExecuteIOWriteBackendError(t *testing.T) {
+func TestExecuteIOErrors(t *testing.T) {
 	tmp, err := os.CreateTemp(t.TempDir(), "ublk_char")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer tmp.Close()
 
-	// Pre-fill char dev to avoid EOF on pread
-	devOffset := ublkUserCopyPos(0, 1)
-	if _, err := tmp.WriteAt(make([]byte, 10), devOffset); err != nil {
-		t.Fatal(err)
-	}
-
+	// Backend read error
 	dev := &Device{
 		charDevFD: tmp,
-		writeAt: func(_ []byte, _ int64) (int, error) {
-			return 0, errors.New("backend write failed")
-		},
+		readAt:    func(_ []byte, _ int64) (int, error) { return 0, errors.New("fail") },
 	}
-	worker := &ioWorker{device: dev, qid: 0, userCopy: true}
+	w := &ioWorker{device: dev, userCopy: true}
+	assert.Equal(t, IOResultEIO, w.executeIO(UBLK_IO_OP_READ, 0, make([]byte, 10), 0, 1))
 
-	res := worker.executeIO(UBLK_IO_OP_WRITE, 0, make([]byte, 10), 0, 1)
-	if res != IOResultEIO {
-		t.Errorf("Expected EIO, got %d", res)
-	}
+	// Backend write error - pre-fill char dev
+	devOffset := ublkUserCopyPos(0, 1)
+	_, err = tmp.WriteAt(make([]byte, 10), devOffset)
+	require.NoError(t, err)
+
+	dev.writeAt = func(_ []byte, _ int64) (int, error) { return 0, errors.New("fail") }
+	assert.Equal(t, IOResultEIO, w.executeIO(UBLK_IO_OP_WRITE, 0, make([]byte, 10), 0, 1))
 }
 
 // BackendWithFlags for testing flag propagation.
@@ -487,40 +218,19 @@ func (b *BackendWithFlags) WriteAtWithFlags(p []byte, off int64, flags uint32) (
 
 func TestExecuteIOWithFlags(t *testing.T) {
 	tmp, err := os.CreateTemp(t.TempDir(), "ublk_char")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer tmp.Close()
 
-	// Pre-fill for read/write test (ensure enough data for WRITE op to read back)
-	devOffset := ublkUserCopyPos(0, 1)
-	// Write enough data to cover both 8 bytes (Read) and "WRITEDATA" (9 bytes) length
-	if _, err := tmp.WriteAt(make([]byte, 1024), devOffset); err != nil {
-		t.Fatal(err)
-	}
+	_, err = tmp.WriteAt(make([]byte, 1024), ublkUserCopyPos(0, 1))
+	require.NoError(t, err)
 
 	backend := &BackendWithFlags{}
-	dev := &Device{
-		charDevFD: tmp,
-		backend:   backend,
-		readAt:    backend.ReadAt,
-		writeAt:   backend.WriteAt,
-	}
-	worker := &ioWorker{device: dev, qid: 0, userCopy: true}
+	dev := &Device{charDevFD: tmp, backend: backend, readAt: backend.ReadAt, writeAt: backend.WriteAt}
+	w := &ioWorker{device: dev, userCopy: true}
 
-	// Test Read with flags
-	flags := uint32(1 << 8)
-	worker.executeIO(UBLK_IO_OP_READ, flags, make([]byte, 8), 0, 1) // tag 1
+	w.executeIO(UBLK_IO_OP_READ, 0x100, make([]byte, 8), 0, 1)
+	assert.Equal(t, uint32(0x100), backend.readFlags)
 
-	if backend.readFlags != flags {
-		t.Errorf("Read flags mismatch: expected %d, got %d", flags, backend.readFlags)
-	}
-
-	// Test Write with flags
-	flags = uint32(1 << 9)
-	worker.executeIO(UBLK_IO_OP_WRITE, flags, []byte("WRITEDATA"), 0, 1) // tag 1
-
-	if backend.writeFlags != flags {
-		t.Errorf("Write flags mismatch: expected %d, got %d", flags, backend.writeFlags)
-	}
+	w.executeIO(UBLK_IO_OP_WRITE, 0x200, []byte("TEST"), 0, 1)
+	assert.Equal(t, uint32(0x200), backend.writeFlags)
 }

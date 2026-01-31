@@ -10,10 +10,6 @@
 # Test artifacts
 *.test
 *.out
-coverage.out
-coverage.html
-*.prof
-*.pprof
 
 # Build artifacts
 /bin/

@@ -3,7 +3,6 @@ package ublk
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math/bits"
 	"os"
 	"sync"
@@ -19,132 +18,68 @@ var (
 	ErrCharDevNotOpen       = errors.New("char device not opened")
 	ErrInvalidRequest       = errors.New("invalid request")
 
-	// controlDevicePath is the path to the ublk control device.
-	// It is a variable to allow overriding in tests.
-	controlDevicePath = "/dev/ublk-control"
+	controlDevicePath = "/dev/ublk-control" // overridable for tests
 )
 
-// Device represents a ublk block device.
-// It manages the lifecycle of the device (Add, Start, Stop, Delete)
-// and coordinates IO workers.
+// Device manages the lifecycle of a ublk block device.
 type Device struct {
-	// Immutable fields
 	devID     int
-	controlFD *os.File // /dev/ublk-control
+	controlFD *os.File
 
-	// Mutable state protected by mu
 	mu        sync.RWMutex
-	charDevFD *os.File // /dev/ublkc*
+	charDevFD *os.File
 	params    UblkParams
 	info      UblksrvCtrlDevInfo
 	added     bool
 	started   bool
-	stopped   bool // prevents double-close of stopCh
+	stopped   bool
 
-	// Configurable I/O buffer size per request
 	maxIOBufBytes uint32
+	backend       Backend
+	readAt        func([]byte, int64) (int, error)
+	writeAt       func([]byte, int64) (int, error)
 
-	// Backend reference for extended operations (Flush, Discard, etc.)
-	backend Backend
+	flags         uint64
+	cow           bool
+	ioctlEncoding bool
 
-	// IO handlers (immutable after creation)
-	readAt  func([]byte, int64) (int, error)
-	writeAt func([]byte, int64) (int, error)
-
-	// Feature flags
-	flags        uint64
-	cow          bool // COW mode: zero-copy overlay + user-copy base
-	disableStats bool // Skip statistics recording
-
-	// Statistics (only updated if !disableStats)
-	stats Stats
-
-	// Worker management
 	workers []*ioWorker
 	wg      sync.WaitGroup
 	stopCh  chan struct{}
 }
 
-// Stats returns the device's IO statistics.
-// Returns nil if stats collection is disabled.
-func (d *Device) Stats() *Stats {
-	if d.disableStats {
-		return nil
-	}
-	return &d.stats
-}
-
-// recordStats records an operation if stats collection is enabled.
-func (d *Device) recordStats(op uint8, bytes uint64, success bool) {
-	if !d.disableStats {
-		d.stats.recordOp(op, bytes, success)
-	}
-}
-
-// DeviceOption configures device creation.
 type DeviceOption func(*Device)
 
-// WithZeroCopy enables zero-copy support (requires CAP_SYS_ADMIN).
-// This enables UBLK_F_SUPPORT_ZERO_COPY which allows the ublk server
-// to register IO buffers and avoid data copying.
 func WithZeroCopy() DeviceOption {
 	return func(d *Device) {
 		d.flags |= UBLK_F_SUPPORT_ZERO_COPY
 	}
 }
 
-// WithAutoBufReg enables automatic buffer registration (requires kernel support).
-// This simplifies zero-copy by having the kernel manage buffer registration.
 func WithAutoBufReg() DeviceOption {
 	return func(d *Device) {
 		d.flags |= UBLK_F_AUTO_BUF_REG | UBLK_F_SUPPORT_ZERO_COPY
 	}
 }
 
-// WithUserCopy enables user-copy mode (requires CAP_SYS_ADMIN).
-// In this mode, the ublk server uses pread()/pwrite() on the character device
-// to transfer data instead of using the mmap buffer. This allows:
-//   - Skipping data transfer entirely for operations that don't need it (FLUSH, DISCARD)
-//   - Copying directly to/from application buffers without intermediate copies
-//   - More control over when and if data is transferred
-//
-// For WRITE requests: call pread(chardev, buf, len, tag*bufsize) to get data.
-// For READ requests: call pwrite(chardev, buf, len, tag*bufsize) to send data.
-// For FLUSH/DISCARD: just complete the request, no pread/pwrite needed.
 func WithUserCopy() DeviceOption {
 	return func(d *Device) {
 		d.flags |= UBLK_F_USER_COPY
 	}
 }
 
-// WithMaxIOBufBytes sets the maximum IO buffer size (per request) in bytes.
 func WithMaxIOBufBytes(size uint32) DeviceOption {
 	return func(d *Device) {
 		d.maxIOBufBytes = size
 	}
 }
 
-// WithCOW enables copy-on-write mode.
-// Uses zero-copy for overlay I/O and user-copy for base reads.
-// Requires a backend that implements COWBackend.
 func WithCOW() DeviceOption {
 	return func(d *Device) {
 		d.cow = true
 	}
 }
 
-// WithDisableStats disables per-operation statistics tracking.
-// This eliminates atomic counter overhead on every I/O operation.
-func WithDisableStats() DeviceOption {
-	return func(d *Device) {
-		d.disableStats = true
-	}
-}
-
-// NewDeviceWithBackend creates a new ublk device instance with a Backend.
-// This allows support for extended operations like Flush and Discard.
-// Optional DeviceOption arguments can be passed to configure features like
-// zero-copy, user recovery, and unprivileged mode.
 func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error) {
 	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
 	if err != nil {
@@ -161,7 +96,6 @@ func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error
 		stopCh:    make(chan struct{}),
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -169,8 +103,6 @@ func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error
 	return d, nil
 }
 
-// Add registers the device with the kernel (UBLK_U_CMD_ADD_DEV).
-// It opens the character device (/dev/ublkc*) for communication.
 func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -190,30 +122,38 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		}
 	}
 
-	// Prepare device info
-	d.flags |= UBLK_F_CMD_IOCTL_ENCODE
 	maxIOBufBytes := d.maxIOBufBytes
 	if maxIOBufBytes == 0 {
 		maxIOBufBytes = 512 * 1024
 	}
+
+	// Try ioctl-encoded command first, fall back to legacy if needed
 	info := UblksrvCtrlDevInfo{
 		NrHWQueues:    nrHWQueues,
 		QueueDepth:    queueDepth,
 		MaxIOBufBytes: maxIOBufBytes,
-		Flags:         d.flags,
+		Flags:         d.flags | UBLK_F_CMD_IOCTL_ENCODE,
 	}
 
-	// Wrap in control command structure
 	cmd := UblksrvCtrlCmd{
-		DevID:   ^uint32(0), // -1 means allocate new device ID
-		QueueID: ^uint16(0), // -1 for non-queue commands
+		DevID:   ^uint32(0), // -1 = allocate new
+		QueueID: ^uint16(0),
 		Addr:    uint64(uintptr(unsafe.Pointer(&info))),
-		Len:     uint16(SizeOfCtrlDevInfo()),
+		Len:     uint16(SizeOfCtrlDevInfo),
 	}
 
-	// Use ioctl-encoded command (required when CONFIG_BLKDEV_UBLK_LEGACY_OPCODES is not set)
-	if err := d.ctrlCommand(uint32(UBLK_U_CMD_ADD_DEV), &cmd); err != nil {
-		return fmt.Errorf("failed to add device: %w", err)
+	err := d.ctrlCommand(uint32(UBLK_U_CMD_ADD_DEV), &cmd)
+	if err != nil {
+		info.Flags = d.flags
+		cmd.Addr = uint64(uintptr(unsafe.Pointer(&info)))
+		err = d.ctrlCommand(UBLK_CMD_ADD_DEV, &cmd)
+		if err != nil {
+			return fmt.Errorf("failed to add device: %w", err)
+		}
+		d.ioctlEncoding = false
+	} else {
+		d.flags |= UBLK_F_CMD_IOCTL_ENCODE
+		d.ioctlEncoding = true
 	}
 
 	d.info = info
@@ -223,25 +163,10 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 	return d.openCharDevice()
 }
 
-// Flags returns the configured device feature flags.
-func (d *Device) Flags() uint64 {
-	return d.flags
-}
-
-// HasZeroCopy returns true if zero-copy support is enabled.
-func (d *Device) HasZeroCopy() bool {
-	return d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0
-}
-
-// HasAutoBufReg returns true if automatic buffer registration is enabled.
-func (d *Device) HasAutoBufReg() bool {
-	return d.flags&UBLK_F_AUTO_BUF_REG != 0
-}
-
-// HasUserCopy returns true if user-copy mode is enabled.
-func (d *Device) HasUserCopy() bool {
-	return d.flags&UBLK_F_USER_COPY != 0
-}
+func (d *Device) Flags() uint64       { return d.flags }
+func (d *Device) HasZeroCopy() bool   { return d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 }
+func (d *Device) HasAutoBufReg() bool { return d.flags&UBLK_F_AUTO_BUF_REG != 0 }
+func (d *Device) HasUserCopy() bool   { return d.flags&UBLK_F_USER_COPY != 0 }
 
 func (d *Device) openCharDevice() error {
 	charDevPath := fmt.Sprintf("/dev/ublkc%d", d.devID)
@@ -301,7 +226,7 @@ func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32, discardSec
 		Len:     uint16(params.Len),
 	}
 
-	if err := d.ctrlCommand(uint32(UBLK_U_CMD_SET_PARAMS), &cmd); err != nil {
+	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_SET_PARAMS), &cmd); err != nil {
 		return fmt.Errorf("failed to set params: %w (requires CAP_SYS_ADMIN)", err)
 	}
 
@@ -326,13 +251,13 @@ func (d *Device) Start() error {
 		QueueID: ^uint16(0), // -1 for non-queue commands
 	}
 
-	if err := d.ctrlCommand(uint32(UBLK_U_CMD_START_DEV), &cmd); err != nil {
+	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_START_DEV), &cmd); err != nil {
 		return fmt.Errorf("failed to start device: %w", err)
 	}
 
 	d.started = true
 	if err := d.startWorkers(); err != nil {
-		stopErr := d.ctrlCommand(uint32(UBLK_U_CMD_STOP_DEV), &cmd)
+		stopErr := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_STOP_DEV), &cmd)
 		d.started = false
 		if stopErr != nil {
 			return errors.Join(err, fmt.Errorf("failed to stop device after worker init error: %w", stopErr))
@@ -388,7 +313,7 @@ func (d *Device) stopLocked() error {
 		QueueID: ^uint16(0), // -1 for non-queue commands
 	}
 	var stopErr error
-	if err := d.ctrlCommand(uint32(UBLK_U_CMD_STOP_DEV), &cmd); err != nil {
+	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_STOP_DEV), &cmd); err != nil {
 		stopErr = fmt.Errorf("UBLK_U_CMD_STOP_DEV failed: %w", err)
 	}
 
@@ -421,18 +346,16 @@ func (d *Device) Delete() error {
 	}
 
 	if d.charDevFD != nil {
-		if err := d.charDevFD.Close(); err != nil {
-			log.Printf("Device %d: char dev close error: %v", d.devID, err)
-		}
+		_ = d.charDevFD.Close()
 		d.charDevFD = nil
 	}
 
 	if d.added && d.devID >= 0 {
 		cmd := UblksrvCtrlCmd{
 			DevID:   uint32(d.devID),
-			QueueID: ^uint16(0), // -1 for non-queue commands
+			QueueID: ^uint16(0),
 		}
-		if err := d.ctrlCommand(uint32(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
+		if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
 			return fmt.Errorf("failed to delete device: %w", err)
 		}
 		d.added = false
@@ -440,9 +363,7 @@ func (d *Device) Delete() error {
 	}
 
 	if d.controlFD != nil {
-		if err := d.controlFD.Close(); err != nil {
-			log.Printf("Device %d: control fd close error: %v", d.devID, err)
-		}
+		_ = d.controlFD.Close()
 		d.controlFD = nil
 	}
 
@@ -550,4 +471,30 @@ func (d *Device) ctrlCommand(cmdOp uint32, cmd *UblksrvCtrlCmd) error {
 		return errors.New("control device closed")
 	}
 	return ctrlCmd(d.controlFD, cmdOp, cmd)
+}
+
+// cmdOpFor returns the appropriate command opcode based on whether
+// ioctl encoding is being used. The input should be the ioctl-encoded
+// command (UBLK_U_CMD_*); if legacy mode is active, it returns the
+// raw command number.
+func (d *Device) cmdOpFor(ioctlEncodedCmd uintptr) uint32 {
+	if d.ioctlEncoding {
+		return uint32(ioctlEncodedCmd)
+	}
+	// Map ioctl-encoded commands to legacy raw commands
+	switch ioctlEncodedCmd {
+	case UBLK_U_CMD_SET_PARAMS:
+		return UBLK_CMD_SET_PARAMS
+	case UBLK_U_CMD_GET_PARAMS:
+		return UBLK_CMD_GET_PARAMS
+	case UBLK_U_CMD_START_DEV:
+		return UBLK_CMD_START_DEV
+	case UBLK_U_CMD_STOP_DEV:
+		return UBLK_CMD_STOP_DEV
+	case UBLK_U_CMD_DEL_DEV:
+		return UBLK_CMD_DEL_DEV
+	default:
+		// Unknown command, return as-is
+		return uint32(ioctlEncodedCmd)
+	}
 }

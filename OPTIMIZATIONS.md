@@ -203,8 +203,21 @@ config.NrHWQueues = 4
 config.QueueDepth = 256   // High parallelism
 ```
 
-## Future Considerations
+## Sparse Read Optimization
 
-### Empty Page Handling
+Backends can implement the `SparseReader` interface to skip I/O for known-zero regions:
 
-Currently, all read requests go through the userspace backend, even for regions known to be empty/zeroed. A future optimization could add explicit empty page tracking, allowing the backend to quickly return zeros for pre-declared empty regions without actual I/O. This would be particularly beneficial for sparse devices or after DISCARD operations.
+```go
+type SparseReader interface {
+    // IsZeroRegion returns true if the entire region is known to be zeros.
+    IsZeroRegion(off, length int64) bool
+}
+```
+
+When implemented, reads from empty regions return zeros without backend I/O. This is beneficial for:
+
+- Sparse devices with unwritten regions
+- After DISCARD/TRIM operations
+- Pre-allocated but empty storage
+
+The `SparseOverlay` type implements this automatically - unwritten regions (holes in the sparse file) are guaranteed to read as zeros by the filesystem.

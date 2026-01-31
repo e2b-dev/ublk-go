@@ -8,13 +8,11 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/e2b-dev/ublk-go/ublk"
 )
 
 // MemoryBackend is a thread-safe in-memory storage backend.
-// It implements all ublk backend interfaces: Backend, Flusher, WriteZeroer, Discarder.
 type MemoryBackend struct {
 	mu   sync.RWMutex
 	data []byte
@@ -29,7 +27,7 @@ func NewMemoryBackend(size int64) *MemoryBackend {
 	}
 }
 
-// ReadAt implements io.ReaderAt (thread-safe).
+// ReadAt implements io.ReaderAt.
 func (b *MemoryBackend) ReadAt(p []byte, off int64) (n int, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -38,17 +36,14 @@ func (b *MemoryBackend) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, io.EOF
 	}
 
-	end := min(off+int64(len(p)), b.size)
-
-	n = copy(p, b.data[off:end])
+	n = copy(p, b.data[off:min(off+int64(len(p)), b.size)])
 	if n < len(p) {
 		return n, io.EOF
 	}
-
 	return n, nil
 }
 
-// WriteAt implements io.WriterAt (thread-safe).
+// WriteAt implements io.WriterAt.
 func (b *MemoryBackend) WriteAt(p []byte, off int64) (n int, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -57,9 +52,7 @@ func (b *MemoryBackend) WriteAt(p []byte, off int64) (n int, err error) {
 		return 0, fmt.Errorf("offset %d beyond size %d", off, b.size)
 	}
 
-	end := min(off+int64(len(p)), b.size)
-
-	n = copy(b.data[off:end], p)
+	n = copy(b.data[off:min(off+int64(len(p)), b.size)], p)
 	return n, nil
 }
 
@@ -77,9 +70,7 @@ func (b *MemoryBackend) WriteZeroes(off, length int64) error {
 		return fmt.Errorf("offset %d beyond size %d", off, b.size)
 	}
 
-	end := min(off+length, b.size)
-	clear(b.data[off:end])
-
+	clear(b.data[off:min(off+length, b.size)])
 	return nil
 }
 
@@ -111,64 +102,11 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
-	// Print stats every 10 seconds
-	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				printStats(dev)
-			case <-done:
-				return
-			}
-		}
-	}()
-
 	<-sigCh
-	close(done)
+
 	fmt.Println("\nStopping device...")
-
-	printStats(dev)
-
 	if err := dev.Delete(); err != nil {
 		log.Fatalf("Failed to delete device: %v", err)
 	}
-
 	fmt.Println("Device stopped successfully")
-}
-
-func printStats(dev *ublk.Device) {
-	stats := dev.Stats().Snapshot()
-	fmt.Println("\n=== Device Stats ===")
-	fmt.Printf("Reads:        %d (%s)\n", stats.Reads, formatBytes(stats.BytesRead))
-	fmt.Printf("Writes:       %d (%s)\n", stats.Writes, formatBytes(stats.BytesWritten))
-	fmt.Printf("Flushes:      %d\n", stats.Flushes)
-	fmt.Printf("Discards:     %d\n", stats.Discards)
-	fmt.Printf("Write Zeroes: %d\n", stats.WriteZeroes)
-	if stats.ReadErrors > 0 || stats.WriteErrors > 0 || stats.OtherErrors > 0 {
-		fmt.Printf("Errors: read=%d write=%d other=%d\n",
-			stats.ReadErrors, stats.WriteErrors, stats.OtherErrors)
-	}
-	fmt.Println("====================")
-}
-
-func formatBytes(bytes uint64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
 }

@@ -5,58 +5,29 @@ import (
 	"io"
 	"iter"
 	"os"
-	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
 
-// SparseOverlay is a sparse file optimized for copy-on-write overlays.
-// It uses SEEK_HOLE/SEEK_DATA for efficient dirty extent tracking without
-// maintaining an in-memory bitmap.
-//
-// Key features:
-//   - Lock-free I/O (pread/pwrite are kernel-atomic)
-//   - O(extents) dirty iteration using kernel's sparse file tracking
-//   - Compatible with COWBackend interface via ClassifyRange
-//
-// Usage:
-//
-//	overlay, _ := NewSparseOverlay("/path/to/overlay", size)
-//	defer overlay.Close()
-//
-//	// Check if range is dirty
-//	allDirty, allClean := overlay.ClassifyRange(offset, length)
-//
-//	// Iterate dirty extents
-//	for extent := range overlay.DirtyExtents() {
-//	    fmt.Printf("dirty: %d-%d\n", extent.Offset, extent.Offset+extent.Length)
-//	}
+// SparseOverlay uses SEEK_HOLE/SEEK_DATA for efficient dirty extent tracking.
 type SparseOverlay struct {
 	file *os.File
 	size int64
-
-	// Statistics (optional, can be ignored)
-	writes     atomic.Uint64
-	bytesWrite atomic.Uint64
 }
 
-// Extent represents a contiguous region in the file.
 type Extent struct {
 	Offset int64
 	Length int64
 }
 
 // Segment represents a contiguous region with uniform dirty/clean status.
-// Used for batched mixed reads - each segment can be read in a single I/O.
 type Segment struct {
-	Offset   int64 // Offset in the file/device
-	Length   int64 // Length of this segment
-	BufOff   int64 // Offset into the target buffer
-	FromBase bool  // true = read from base (clean), false = read from overlay (dirty)
+	Offset   int64
+	Length   int64
+	BufOff   int64
+	FromBase bool // true = read from base (clean)
 }
 
-// NewSparseOverlay creates a new sparse overlay file.
-// The file is created/truncated at the given path with the specified size.
 func NewSparseOverlay(path string, size int64) (*SparseOverlay, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -74,8 +45,6 @@ func NewSparseOverlay(path string, size int64) (*SparseOverlay, error) {
 	}, nil
 }
 
-// NewSparseOverlayFromFile wraps an existing file as a sparse overlay.
-// The file should already be truncated to the desired size.
 func NewSparseOverlayFromFile(file *os.File, size int64) *SparseOverlay {
 	return &SparseOverlay{
 		file: file,
@@ -83,49 +52,15 @@ func NewSparseOverlayFromFile(file *os.File, size int64) *SparseOverlay {
 	}
 }
 
-// File returns the underlying file for zero-copy registration.
-// Implements the Overlay() method needed by COWBackend.
-func (s *SparseOverlay) File() *os.File {
-	return s.file
-}
+func (s *SparseOverlay) File() *os.File                           { return s.file }
+func (s *SparseOverlay) Size() int64                              { return s.size }
+func (s *SparseOverlay) ReadAt(p []byte, off int64) (int, error)  { return s.file.ReadAt(p, off) }
+func (s *SparseOverlay) WriteAt(p []byte, off int64) (int, error) { return s.file.WriteAt(p, off) }
 
-// Size returns the overlay size.
-func (s *SparseOverlay) Size() int64 {
-	return s.size
-}
+func (s *SparseOverlay) Sync() error  { return s.file.Sync() }
+func (s *SparseOverlay) Close() error { return s.file.Close() }
 
-// ReadAt reads from the overlay file.
-func (s *SparseOverlay) ReadAt(p []byte, off int64) (int, error) {
-	return s.file.ReadAt(p, off)
-}
-
-// WriteAt writes to the overlay file.
-func (s *SparseOverlay) WriteAt(p []byte, off int64) (int, error) {
-	n, err := s.file.WriteAt(p, off)
-	if err == nil {
-		s.writes.Add(1)
-		s.bytesWrite.Add(uint64(n))
-	}
-	return n, err
-}
-
-// Sync flushes the overlay to disk.
-func (s *SparseOverlay) Sync() error {
-	return s.file.Sync()
-}
-
-// Close closes the overlay file.
-func (s *SparseOverlay) Close() error {
-	return s.file.Close()
-}
-
-// ClassifyRange determines if a byte range is dirty (has data) or clean (hole).
-// Returns:
-//   - allDirty=true: entire range has been written
-//   - allClean=true: entire range is a hole (never written)
-//   - both false: range spans both data and hole regions
-//
-// This is compatible with COWBackend.ClassifyRange.
+// ClassifyRange returns (allDirty, allClean) for the byte range.
 func (s *SparseOverlay) ClassifyRange(off, length int64) (allDirty, allClean bool) {
 	if length <= 0 {
 		return false, true
@@ -168,7 +103,6 @@ func (s *SparseOverlay) ClassifyRange(off, length int64) (allDirty, allClean boo
 	return false, false
 }
 
-// IsDirty checks if any part of the range has been written.
 func (s *SparseOverlay) IsDirty(off, length int64) bool {
 	allDirty, allClean := s.ClassifyRange(off, length)
 	return allDirty || (!allClean) // dirty if not all clean
@@ -256,8 +190,13 @@ func (s *SparseOverlay) SegmentRange(off, length int64) iter.Seq[Segment] {
 	}
 }
 
-// IsClean checks if the entire range is unwritten (hole).
 func (s *SparseOverlay) IsClean(off, length int64) bool {
+	_, allClean := s.ClassifyRange(off, length)
+	return allClean
+}
+
+// IsZeroRegion implements SparseReader. Holes read as zeros.
+func (s *SparseOverlay) IsZeroRegion(off, length int64) bool {
 	_, allClean := s.ClassifyRange(off, length)
 	return allClean
 }
@@ -334,7 +273,6 @@ func (s *SparseOverlay) CleanExtents() iter.Seq[Extent] {
 	}
 }
 
-// DirtyBytes returns the total bytes written (sum of data extent lengths).
 func (s *SparseOverlay) DirtyBytes() int64 {
 	var total int64
 	for ext := range s.DirtyExtents() {
@@ -343,7 +281,6 @@ func (s *SparseOverlay) DirtyBytes() int64 {
 	return total
 }
 
-// DirtyExtentCount returns the number of dirty extents.
 func (s *SparseOverlay) DirtyExtentCount() int {
 	count := 0
 	for range s.DirtyExtents() {
@@ -384,11 +321,6 @@ func (s *SparseOverlay) ExportDiff(w io.Writer) error {
 	}
 
 	return nil
-}
-
-// Stats returns write statistics.
-func (s *SparseOverlay) Stats() (writes, bytesWritten uint64) {
-	return s.writes.Load(), s.bytesWrite.Load()
 }
 
 func putUint64LE(b []byte, v uint64) {

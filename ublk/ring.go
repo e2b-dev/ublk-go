@@ -11,31 +11,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Ring represents an io_uring instance.
-// It manages the submission and completion queues and provides
-// methods to submit operations and wait for completions.
 type Ring struct {
-	fd     int
-	sq     *submissionQueue
-	cq     *completionQueue
-	sqes   []UringSQE
-	params UringParams
-	flags  uint
-
-	// Fixed file support
-	fixedFiles    []int32 // registered file descriptors
+	fd            int
+	sq            *submissionQueue
+	cq            *completionQueue
+	sqes          []UringSQE
+	params        UringParams
+	flags         uint
+	fixedFiles    []int32
 	hasFixedFiles bool
-
-	// Mmap tracking for cleanup
-	mmapSQ   []byte
-	mmapCQ   []byte
-	mmapSQEs []byte
-
-	// SQE size tracking
-	sqeSize uintptr
+	mmapSQ        []byte
+	mmapCQ        []byte
+	mmapSQEs      []byte
+	sqeSize       uintptr
 }
 
-// RingOption configures ring creation.
 type RingOption func(*ringConfig)
 
 type ringConfig struct {
@@ -45,17 +35,12 @@ type ringConfig struct {
 	sqe128       bool
 }
 
-// WithSingleIssuer enables IORING_SETUP_SINGLE_ISSUER (kernel 6.0+).
-// This should be used when only one thread submits to the ring.
 func WithSingleIssuer() RingOption {
 	return func(c *ringConfig) {
 		c.singleIssuer = true
 	}
 }
 
-// WithDeferTaskrun enables IORING_SETUP_DEFER_TASKRUN (kernel 6.1+).
-// This defers task work to reduce context switches.
-// Must be combined with SINGLE_ISSUER.
 func WithDeferTaskrun() RingOption {
 	return func(c *ringConfig) {
 		c.deferTaskrun = true
@@ -63,22 +48,18 @@ func WithDeferTaskrun() RingOption {
 	}
 }
 
-// WithCoopTaskrun enables IORING_SETUP_COOP_TASKRUN (kernel 6.0+).
-// This enables cooperative task running.
 func WithCoopTaskrun() RingOption {
 	return func(c *ringConfig) {
 		c.coopTaskrun = true
 	}
 }
 
-// WithSQE128 enables IORING_SETUP_SQE128 for 128-byte SQEs.
 func WithSQE128() RingOption {
 	return func(c *ringConfig) {
 		c.sqe128 = true
 	}
 }
 
-// submissionQueue represents the mapped submission queue.
 type submissionQueue struct {
 	head        *uint32
 	tail        *uint32
@@ -91,7 +72,6 @@ type submissionQueue struct {
 	sqeTail     uint32
 }
 
-// completionQueue represents the mapped completion queue.
 type completionQueue struct {
 	head        *uint32
 	tail        *uint32
@@ -150,11 +130,11 @@ func NewRingWithOptions(entries uint, flags uint, opts ...RingOption) (*Ring, er
 		fd:      int(fd),
 		params:  params,
 		flags:   flags,
-		sqeSize: SizeOfUringSQE(),
+		sqeSize: SizeOfUringSQE,
 	}
 
 	if cfg.sqe128 {
-		ring.sqeSize = SizeOfUringSQE128()
+		ring.sqeSize = SizeOfUringSQE128
 	}
 
 	if err := ring.mmapRings(entries); err != nil {
@@ -172,7 +152,7 @@ func (r *Ring) mmapRings(entries uint) error {
 
 	// Calculate ring sizes
 	sqRingSize := int(sqOff.Array) + int(entries)*4
-	cqRingSize := int(cqOff.Cqes) + int(r.params.CQEntries)*int(SizeOfUringCQE())
+	cqRingSize := int(cqOff.Cqes) + int(r.params.CQEntries)*int(SizeOfUringCQE)
 
 	// Map SQ ring
 	sqPtr, err := unix.Mmap(r.fd, IORING_OFF_SQ_RING, sqRingSize,
@@ -222,7 +202,7 @@ func (r *Ring) mmapRings(entries uint) error {
 	// Slice casting - keep pointer conversion in single expression to satisfy go vet
 	// Note: r.sqes is NOT initialized here anymore if using SQE128, or we can keep it for 64-bit backward compat
 	// But clearer to just rely on mmapSQEs byte slice and helper methods
-	if r.sqeSize == SizeOfUringSQE() {
+	if r.sqeSize == SizeOfUringSQE {
 		r.sqes = (*[1 << 20]UringSQE)(unsafe.Pointer(&sqesPtr[0]))[:entries:entries]
 	}
 	r.cq.cqes = (*[1 << 20]UringCQE)(unsafe.Pointer(&cqPtr[cqOff.Cqes]))[:r.params.CQEntries:r.params.CQEntries]
@@ -268,7 +248,7 @@ func (r *Ring) Close() error {
 // GetSQE gets a new submission queue entry (standard 64-byte).
 // Returns error if ring was initialized with SQE128.
 func (r *Ring) GetSQE() (*UringSQE, error) {
-	if r.sqeSize != SizeOfUringSQE() {
+	if r.sqeSize != SizeOfUringSQE {
 		return nil, errors.New("Ring initialized with SQE128, use GetSQE128")
 	}
 
@@ -294,7 +274,7 @@ func (r *Ring) GetSQE() (*UringSQE, error) {
 // GetSQE128 gets a new 128-byte submission queue entry.
 // Returns error if ring was NOT initialized with SQE128.
 func (r *Ring) GetSQE128() (*UringSQE128, error) {
-	if r.sqeSize != SizeOfUringSQE128() {
+	if r.sqeSize != SizeOfUringSQE128 {
 		return nil, errors.New("Ring not initialized with SQE128")
 	}
 

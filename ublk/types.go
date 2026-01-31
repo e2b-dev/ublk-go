@@ -1,8 +1,5 @@
 package ublk
 
-// ublk control and IO command definitions
-// Based on Linux kernel ublk driver interface
-
 const (
 	UBLK_IO_OP_READ         = 0
 	UBLK_IO_OP_WRITE        = 1
@@ -11,31 +8,22 @@ const (
 	UBLK_IO_OP_WRITE_ZEROES = 5
 )
 
+const UBLK_IO_F_FUA = 1 << 13
+
 const (
-	// IO flags in ublksrv_io_desc.op_flags (upper 24 bits).
-	UBLK_IO_F_FUA = 1 << 13
+	UBLK_F_SUPPORT_ZERO_COPY = 1 << 0
+	UBLK_F_CMD_IOCTL_ENCODE  = 1 << 6
+	UBLK_F_USER_COPY         = 1 << 7
+	UBLK_F_AUTO_BUF_REG      = 1 << 11
 )
 
-// Device feature flags (passed to UBLK_U_CMD_ADD_DEV).
-// Values from linux/ublk_cmd.h.
 const (
-	UBLK_F_SUPPORT_ZERO_COPY = 1 << 0  // Enable zero-copy support
-	UBLK_F_CMD_IOCTL_ENCODE  = 1 << 6  // Encode ioctl in uring_cmd
-	UBLK_F_USER_COPY         = 1 << 7  // User-space data copying
-	UBLK_F_AUTO_BUF_REG      = 1 << 11 // Automatic buffer registration
-)
-
-// Constants for USER_COPY encoded offset (from ublk_cmd.h).
-const (
-	UBLK_MAX_QUEUE_DEPTH = 4096
-
-	UBLK_IO_BUF_BITS = 25
-	UBLK_TAG_BITS    = 16
-	UBLK_QID_BITS    = 12
-
-	UBLK_TAG_OFF = UBLK_IO_BUF_BITS
-	UBLK_QID_OFF = UBLK_TAG_OFF + UBLK_TAG_BITS
-
+	UBLK_MAX_QUEUE_DEPTH  = 4096
+	UBLK_IO_BUF_BITS      = 25
+	UBLK_TAG_BITS         = 16
+	UBLK_QID_BITS         = 12
+	UBLK_TAG_OFF          = UBLK_IO_BUF_BITS
+	UBLK_QID_OFF          = UBLK_TAG_OFF + UBLK_TAG_BITS
 	UBLKSRV_IO_BUF_OFFSET = 0x80000000
 )
 
@@ -45,13 +33,11 @@ func ublkUserCopyPos(qid, tag uint16) int64 {
 			(int64(tag) << UBLK_TAG_OFF))
 }
 
-// Ublk params types (ublk_params.types bitset).
 const (
 	UBLK_PARAM_TYPE_BASIC   = 1 << 0
 	UBLK_PARAM_TYPE_DISCARD = 1 << 1
 )
 
-// UblkParams represents device parameters (matches struct ublk_params).
 type UblkParams struct {
 	Len   uint32
 	Types uint32
@@ -111,26 +97,15 @@ type UblkParamSegment struct {
 	Pad             [2]uint8
 }
 
-// UblkDevInfo represents device information (alias for UblksrvCtrlDevInfo).
 type UblkDevInfo = UblksrvCtrlDevInfo
 
-// UblksrvIODesc represents an IO descriptor (from kernel to server).
-// Matches struct ublksrv_io_desc in linux/ublk_cmd.h.
 type UblksrvIODesc struct {
-	// op: bit 0-7, flags: bit 8-31
-	OpFlags uint32
-
-	// union: nr_sectors or nr_zones
-	NrSectors uint32
-
-	// start sector for this io
+	OpFlags     uint32 // op: bits 0-7, flags: bits 8-31
+	NrSectors   uint32
 	StartSector uint64
-
-	// buffer address in ublksrv vm space, from ublk driver
-	Addr uint64
+	Addr        uint64
 }
 
-// UblkQueueAffinity represents queue affinity information.
 type UblkQueueAffinity struct {
 	QID      uint16
 	Pad      [3]uint16

@@ -6,30 +6,20 @@ import (
 )
 
 func BenchmarkGetSetIODesc(b *testing.B) {
-	worker := &ioWorker{
-		queueDepth: 128,
-	}
-
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	worker.mmapAddr = make([]byte, descSize*128)
-
-	desc := UblksrvIODesc{
-		// Updated to match new struct fields
-		StartSector: 0,
-		NrSectors:   8,
-		OpFlags:     UBLK_IO_F_FUA,
-	}
+	w := &ioWorker{queueDepth: 128}
+	w.mmapAddr = make([]byte, int(unsafe.Sizeof(UblksrvIODesc{}))*128)
+	desc := UblksrvIODesc{StartSector: 0, NrSectors: 8, OpFlags: UBLK_IO_F_FUA}
 
 	b.ResetTimer()
 	for i := range b.N {
 		tag := uint16(i % 128)
-		worker.setIODesc(tag, desc)
-		_ = worker.getIODesc(tag)
+		w.setIODesc(tag, desc)
+		_ = w.getIODesc(tag)
 	}
 }
 
 func BenchmarkUblkIOCommandToBytes(b *testing.B) {
-	cmd, _ := NewFetchReqCommand(1, 1, 0) // qid=1, tag=1
+	cmd, _ := NewFetchReqCommand(1, 1, 0)
 	b.ResetTimer()
 	for b.Loop() {
 		_ = cmd.ToBytes()
@@ -37,7 +27,6 @@ func BenchmarkUblkIOCommandToBytes(b *testing.B) {
 }
 
 func BenchmarkRoundUpPow2(b *testing.B) {
-	b.ResetTimer()
 	for i := range b.N {
 		_ = roundUpPow2(uint(i % 4096))
 	}
