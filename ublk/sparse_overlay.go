@@ -492,3 +492,132 @@ func (s *SparseOverlay) ReadMixed(buf []byte, off int64, baseReader io.ReaderAt)
 
 	return totalRead, nil
 }
+
+// iovMax is the maximum number of iovec entries per preadv/pwritev call.
+// Linux default is 1024 (UIO_MAXIOV). We use a conservative value.
+const iovMax = 1024
+
+// vectoredSegment holds segment info for vectored I/O grouping.
+type vectoredSegment struct {
+	fileOffset int64 // offset in source file
+	bufSlice   []byte
+}
+
+// ReadMixedVectored reads a mixed range using preadv for efficiency.
+// It groups non-contiguous segments by source and issues one preadv per source,
+// reducing syscall overhead when there are many small scattered segments.
+//
+// This is more efficient than ReadMixed when:
+//   - Many small non-contiguous segments from the same source
+//   - File-backed storage (not memfd where syscall overhead is minimal)
+//   - Fragmented access patterns
+//
+// Parameters:
+//   - buf: destination buffer
+//   - off: starting offset
+//   - baseFd: file descriptor for base image
+//
+// Returns the number of bytes read and any error.
+func (s *SparseOverlay) ReadMixedVectored(buf []byte, off int64, baseFd int) (int, error) {
+	// Collect segments grouped by source
+	var baseSegs, overlaySegs []vectoredSegment
+
+	for seg := range s.SegmentRange(off, int64(len(buf))) {
+		vs := vectoredSegment{
+			fileOffset: seg.Offset,
+			bufSlice:   buf[seg.BufOff : seg.BufOff+seg.Length],
+		}
+		if seg.FromBase {
+			baseSegs = append(baseSegs, vs)
+		} else {
+			overlaySegs = append(overlaySegs, vs)
+		}
+	}
+
+	totalRead := 0
+
+	// Read from base using preadv
+	n, err := preadvSegments(baseFd, baseSegs)
+	totalRead += n
+	if err != nil {
+		return totalRead, err
+	}
+
+	// Read from overlay using preadv
+	n, err = preadvSegments(int(s.file.Fd()), overlaySegs)
+	totalRead += n
+	if err != nil {
+		return totalRead, err
+	}
+
+	return totalRead, nil
+}
+
+// preadvSegments reads multiple non-contiguous segments using preadv.
+// Handles IOV_MAX limit by splitting into multiple calls if needed.
+func preadvSegments(fd int, segs []vectoredSegment) (int, error) {
+	if len(segs) == 0 {
+		return 0, nil
+	}
+
+	totalRead := 0
+
+	// Process segments in chunks of iovMax
+	for i := 0; i < len(segs); i += iovMax {
+		end := min(i+iovMax, len(segs))
+		chunk := segs[i:end]
+
+		// For preadv, all iovecs share the same file offset, so we can only
+		// batch segments that are contiguous in the file. For non-contiguous
+		// segments, we need separate preadv calls.
+		//
+		// Group contiguous segments for each preadv call.
+		n, err := preadvContiguousGroups(fd, chunk)
+		totalRead += n
+		if err != nil {
+			return totalRead, err
+		}
+	}
+
+	return totalRead, nil
+}
+
+// preadvContiguousGroups issues preadv calls for groups of contiguous segments.
+// Since preadv reads sequentially from a single offset, we group segments that
+// are contiguous in the file.
+func preadvContiguousGroups(fd int, segs []vectoredSegment) (int, error) {
+	if len(segs) == 0 {
+		return 0, nil
+	}
+
+	totalRead := 0
+	groupStart := 0
+
+	for i := 1; i <= len(segs); i++ {
+		// Check if this segment is contiguous with previous
+		isContiguous := false
+		if i < len(segs) {
+			prevEnd := segs[i-1].fileOffset + int64(len(segs[i-1].bufSlice))
+			isContiguous = segs[i].fileOffset == prevEnd
+		}
+
+		if !isContiguous {
+			// Flush current group
+			group := segs[groupStart:i]
+			iovecs := make([][]byte, len(group))
+			for j, seg := range group {
+				iovecs[j] = seg.bufSlice
+			}
+
+			n, err := unix.Preadv(fd, iovecs, group[0].fileOffset)
+			totalRead += n
+			if err != nil {
+				return totalRead, err
+			}
+
+			groupStart = i
+		}
+	}
+
+	return totalRead, nil
+}

@@ -277,3 +277,99 @@ func TestSparseOverlay_ReadMixed(t *testing.T) {
 		t.Errorf("overlay portion = %q, want %q", got, "OVERLAY!")
 	}
 }
+
+func TestSparseOverlay_ReadMixedVectored(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create base file with pattern
+	basePath := filepath.Join(dir, "base")
+	baseFile, err := os.Create(basePath)
+	if err != nil {
+		t.Fatalf("Create base: %v", err)
+	}
+	defer baseFile.Close()
+
+	// Write "BASEBASE..." pattern to base
+	basePattern := bytes.Repeat([]byte("BASE"), 4096) // 16KB
+	if _, err := baseFile.Write(basePattern); err != nil {
+		t.Fatalf("Write base: %v", err)
+	}
+
+	// Create overlay
+	overlayPath := filepath.Join(dir, "overlay")
+	size := int64(16 * 1024) // 16KB
+	s, err := NewSparseOverlay(overlayPath, size)
+	if err != nil {
+		t.Fatalf("NewSparseOverlay: %v", err)
+	}
+	defer s.Close()
+
+	// Write "DIRTY!!!" at offset 4096 (block 1)
+	dirtyData := []byte("DIRTY!!!")
+	if _, err := s.WriteAt(dirtyData, 4096); err != nil {
+		t.Fatalf("WriteAt overlay: %v", err)
+	}
+
+	// Read mixed range using vectored I/O
+	buf := make([]byte, 8192)
+	n, err := s.ReadMixedVectored(buf, 0, int(baseFile.Fd()))
+	if err != nil {
+		t.Fatalf("ReadMixedVectored: %v", err)
+	}
+	if n != 8192 {
+		t.Errorf("ReadMixedVectored returned %d bytes, want 8192", n)
+	}
+
+	// First 4 bytes should be "BASE" from base file
+	if string(buf[0:4]) != "BASE" {
+		t.Errorf("base portion = %q, want %q", string(buf[0:4]), "BASE")
+	}
+
+	// Bytes 4096-4103 should be "DIRTY!!!" from overlay
+	got := string(buf[4096 : 4096+len(dirtyData)])
+	if got != "DIRTY!!!" {
+		t.Errorf("overlay portion = %q, want %q", got, "DIRTY!!!")
+	}
+}
+
+func TestPreadvContiguousGroups(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testfile")
+
+	// Create file with known content
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer f.Close()
+
+	// Write: "AAAABBBBCCCCDDDD" (4 bytes each)
+	content := []byte("AAAABBBBCCCCDDDD")
+	if _, err := f.Write(content); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// Read non-contiguous: bytes 0-3 (AAAA) and 8-11 (CCCC)
+	buf1 := make([]byte, 4)
+	buf2 := make([]byte, 4)
+
+	segs := []vectoredSegment{
+		{fileOffset: 0, bufSlice: buf1},
+		{fileOffset: 8, bufSlice: buf2},
+	}
+
+	n, err := preadvContiguousGroups(int(f.Fd()), segs)
+	if err != nil {
+		t.Fatalf("preadvContiguousGroups: %v", err)
+	}
+	if n != 8 {
+		t.Errorf("read %d bytes, want 8", n)
+	}
+
+	if string(buf1) != "AAAA" {
+		t.Errorf("buf1 = %q, want %q", string(buf1), "AAAA")
+	}
+	if string(buf2) != "CCCC" {
+		t.Errorf("buf2 = %q, want %q", string(buf2), "CCCC")
+	}
+}
