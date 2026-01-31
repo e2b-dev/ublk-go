@@ -8,6 +8,8 @@ import (
 	"os"
 	"sync"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -456,6 +458,80 @@ func (d *Device) blockSize() uint64 {
 		return 512
 	}
 	return 1 << shift
+}
+
+// Sync flushes all cached data to the backend and waits for acknowledgment.
+// This opens the block device, calls fsync(), and waits for completion.
+// When fsync is called, the kernel sends FLUSH requests through ublk,
+// which are handled by calling the backend's Flush() method (if implemented).
+//
+// This is a synchronous operation - when it returns successfully, all data
+// that was written before the call is guaranteed to be persisted to the
+// backend's stable storage.
+//
+// Returns an error if the device is not started or if fsync fails.
+func (d *Device) Sync() error {
+	d.mu.RLock()
+	if !d.started {
+		d.mu.RUnlock()
+		return ErrDeviceNotStarted
+	}
+	devPath := d.BlockDevicePath()
+	d.mu.RUnlock()
+
+	// Open the block device
+	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open block device for sync: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
+	// fsync triggers FLUSH requests through the block layer to ublk
+	if err := unix.Fsync(fd); err != nil {
+		return fmt.Errorf("fsync failed: %w", err)
+	}
+
+	return nil
+}
+
+// BLKFLSBUF is the ioctl number for flushing block device buffers.
+const ioctlBLKFLSBUF = 0x1261
+
+// FlushBuffers invalidates the kernel's buffer cache for this block device.
+// This uses the BLKFLSBUF ioctl to flush and invalidate cached data.
+//
+// Unlike Sync(), this does NOT send a FLUSH command to the backend.
+// It only clears the kernel's page cache for the device, which is useful for:
+//   - Invalidating stale cached reads after external changes
+//   - Preparing a device for removal
+//   - Testing/benchmarking without cache effects
+//
+// For durability guarantees (ensuring data reaches stable storage),
+// use Sync() instead.
+//
+// Returns an error if the device is not started or if the ioctl fails.
+func (d *Device) FlushBuffers() error {
+	d.mu.RLock()
+	if !d.started {
+		d.mu.RUnlock()
+		return ErrDeviceNotStarted
+	}
+	devPath := d.BlockDevicePath()
+	d.mu.RUnlock()
+
+	// Open the block device
+	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open block device for buffer flush: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+
+	// BLKFLSBUF flushes the buffer cache (does not send FLUSH to device)
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), ioctlBLKFLSBUF, 0); errno != 0 {
+		return fmt.Errorf("BLKFLSBUF ioctl failed: %w", errno)
+	}
+
+	return nil
 }
 
 // ctrlCommand executes a control command via io_uring.

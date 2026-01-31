@@ -1,6 +1,7 @@
 package ublk
 
 import (
+	"errors"
 	"os"
 	"testing"
 )
@@ -259,5 +260,31 @@ func TestNewDeviceError(t *testing.T) {
 	_, err = NewDeviceWithBackend(&MockBackend{})
 	if err == nil {
 		t.Error("Expected error for non-existent control device")
+	}
+}
+
+func TestDeviceSyncNotStarted(t *testing.T) {
+	t.Parallel()
+	d := &Device{
+		devID:   0,
+		started: false,
+	}
+
+	err := d.Sync()
+	if !errors.Is(err, ErrDeviceNotStarted) {
+		t.Errorf("Expected ErrDeviceNotStarted, got: %v", err)
+	}
+}
+
+func TestDeviceFlushBuffersNotStarted(t *testing.T) {
+	t.Parallel()
+	d := &Device{
+		devID:   0,
+		started: false,
+	}
+
+	err := d.FlushBuffers()
+	if !errors.Is(err, ErrDeviceNotStarted) {
+		t.Errorf("Expected ErrDeviceNotStarted, got: %v", err)
 	}
 }
