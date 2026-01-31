@@ -2,21 +2,17 @@
 
 ## Requirements
 
-- Go 1.25 or later
+- Go 1.23 or later
 - Linux kernel 6.0+ with ublk driver enabled
 - **Root privileges (CAP_SYS_ADMIN)** for creating ublk devices
-- liburing development headers and a CGO-enabled Go toolchain
 
 ## Building
 
-CGO is required for io_uring constants:
-
 ```bash
-# Install liburing-dev (Ubuntu/Debian) or liburing-devel (Fedora)
-sudo apt-get install liburing-dev gcc
-
 go build ./...
 ```
+
+No external dependencies required - pure Go implementation.
 
 ## Testing
 
@@ -94,12 +90,12 @@ sudo modprobe ublk_drv
 ls -l /dev/ublk-control
 
 # Run all integration tests
-sudo -E go test -tags=integration -v ./ublk -run Integration
+sudo go test -tags=integration -v ./ublk -run Integration
 
 # Run specific integration tests
-sudo -E go test -tags=integration -v ./ublk -run IntegrationMmap
-sudo -E go test -tags=integration -v ./ublk -run IntegrationDirectIO
-sudo -E go test -tags=integration -v ./ublk -run IntegrationConcurrent
+sudo go test -tags=integration -v ./ublk -run IntegrationMmap
+sudo go test -tags=integration -v ./ublk -run IntegrationDirectIO
+sudo go test -tags=integration -v ./ublk -run IntegrationConcurrent
 ```
 
 ### Mmap example (requires root)
@@ -112,6 +108,21 @@ sudo go run ./example/mmap_test/
 
 # Run the basic example
 sudo go run ./example/main.go
+```
+
+## Makefile Targets
+
+```bash
+make help          # Show all available targets
+make build         # Build all packages
+make test          # Run unit tests
+make test-race     # Run tests with race detector
+make test-cover    # Run tests with coverage
+make lint          # Run linters
+make fmt           # Format code
+make security      # Run vulnerability check (govulncheck)
+make check         # Run fmt, lint, test
+make ci            # Full CI pipeline
 ```
 
 ## Troubleshooting
@@ -136,10 +147,3 @@ ublk requires root privileges to create block devices:
 ```bash
 sudo go run ./example/main.go
 ```
-
-### CGO build issues
-
-If you encounter CGO build issues:
-
-1. Install liburing-dev: `sudo apt-get install liburing-dev gcc`
-2. Check pkg-config: `pkg-config --modversion liburing`

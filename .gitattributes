@@ -1,0 +1,33 @@
+# Git attributes for ublk-go
+# https://git-scm.com/docs/gitattributes
+
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Go source files
+*.go text eol=lf diff=golang
+
+# Shell scripts
+*.sh text eol=lf
+
+# Makefiles
+Makefile text eol=lf
+
+# Markdown
+*.md text eol=lf diff=markdown
+
+# YAML
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# JSON
+*.json text eol=lf
+
+# Ignore generated files in diffs
+go.sum -diff
+
+# Binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

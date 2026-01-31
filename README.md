@@ -1,6 +1,11 @@
 # ublk-go
 
-A Go implementation of the Linux ublk (userspace block device) driver.
+[![Go](https://github.com/ublk-go/ublk/actions/workflows/go.yml/badge.svg)](https://github.com/ublk-go/ublk/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ublk-go/ublk.svg)](https://pkg.go.dev/github.com/ublk-go/ublk)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ublk-go/ublk)](https://goreportcard.com/report/github.com/ublk-go/ublk)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+A pure Go implementation of the Linux ublk (userspace block device) driver.
 
 ## Overview
 
@@ -8,10 +13,9 @@ This library allows you to create block devices in userspace by implementing sim
 
 ## Requirements
 
-- Linux kernel 6.0+ with ublk driver enabled (6.1+ for best performance)
-- Go 1.25+
-- Root privileges (for creating block devices)
-- liburing development headers (via pkg-config) and CGO-enabled Go toolchain
+- Linux kernel 6.0+ with ublk driver enabled
+- Go 1.23+
+- Root privileges (CAP_SYS_ADMIN) for creating block devices
 
 ## Installation
 
@@ -145,9 +149,9 @@ See `example/main.go` for a complete example with an in-memory backend.
 
 ## Status
 
-Go implementation with CGO-backed io_uring constants (liburing headers).
+Pure Go implementation using direct io_uring syscalls. No CGO required.
 
-See `BUILD.md` for build instructions and `ARCHITECTURE.md` for design details.
+See [BUILD.md](BUILD.md) for build instructions and [ARCHITECTURE.md](ARCHITECTURE.md) for design details.
 
 ## References
 
@@ -156,6 +160,10 @@ See `BUILD.md` for build instructions and `ARCHITECTURE.md` for design details.
 - [libublk-rs Rust implementation](https://github.com/ublk-org/libublk-rs)
 - [LWN: Zero-copy I/O for ublk](https://lwn.net/Articles/926118/)
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## License
 
-MIT
+Apache 2.0 - see [LICENSE](LICENSE) for details.
