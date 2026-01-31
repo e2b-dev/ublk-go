@@ -30,7 +30,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,11 +41,12 @@ import (
 
 // COWBackend implements copy-on-write over a read-only base.
 // Multiple COWBackends can share the same base for efficient cloning.
+//
+// Lock-free: bitmap uses atomic operations, file I/O is kernel-atomic.
 type COWBackend struct {
-	mu        sync.RWMutex
 	base      *os.File // Read-only base image (can be shared)
 	overlay   *os.File // Per-instance writable overlay
-	dirty     []uint64 // Bitmap: 1 bit per block
+	dirty     []uint64 // Bitmap: 1 bit per block (accessed atomically)
 	blockSize int64
 	size      int64
 }
@@ -78,25 +79,30 @@ func NewCOWBackend(base *os.File, size, blockSize int64) (*COWBackend, error) {
 	}, nil
 }
 
-// isBlockDirty checks if a block has been written to the overlay.
+// isBlockDirty checks if a block has been written (atomic).
 func (b *COWBackend) isBlockDirty(blockNum int64) bool {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	return b.dirty[idx]&bit != 0
+	return atomic.LoadUint64(&b.dirty[idx])&bit != 0
 }
 
-// markBlockDirty marks a block as written to the overlay.
+// markBlockDirty atomically marks a block as dirty using CAS.
 func (b *COWBackend) markBlockDirty(blockNum int64) {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	b.dirty[idx] |= bit
+	for {
+		old := atomic.LoadUint64(&b.dirty[idx])
+		if old&bit != 0 {
+			return // already dirty
+		}
+		if atomic.CompareAndSwapUint64(&b.dirty[idx], old, old|bit) {
+			return
+		}
+	}
 }
 
 // ReadAt reads from overlay if dirty, otherwise from base.
 func (b *COWBackend) ReadAt(p []byte, off int64) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	// Handle block-aligned reads efficiently
 	startBlock := off / b.blockSize
 	endOff := off + int64(len(p))
@@ -156,9 +162,6 @@ func (b *COWBackend) ReadAt(p []byte, off int64) (int, error) {
 
 // WriteAt writes to the overlay and marks blocks as dirty.
 func (b *COWBackend) WriteAt(p []byte, off int64) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Write to overlay
 	n, err := b.overlay.WriteAt(p, off)
 	if err != nil {
@@ -201,16 +204,11 @@ func (b *COWBackend) WriteAt(p []byte, off int64) (int, error) {
 
 // Flush syncs the overlay to stable storage.
 func (b *COWBackend) Flush() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	return b.overlay.Sync()
 }
 
 // DirtyBlockCount returns the number of blocks written to the overlay.
 func (b *COWBackend) DirtyBlockCount() int64 {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var count int64
 	for _, word := range b.dirty {
 		// Count set bits

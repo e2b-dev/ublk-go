@@ -39,7 +39,6 @@ import (
 	"math/bits"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -52,15 +51,17 @@ import (
 // COWBackend implements copy-on-write over a read-only base with a sparse overlay.
 // It maintains a bitmap for O(1) dirty block tracking and uses SEEK_HOLE/SEEK_DATA
 // for efficient diff extraction.
+//
+// This implementation is lock-free:
+// - Bitmap uses atomic operations
+// - File I/O uses pread/pwrite which are atomic at kernel level.
 type COWBackend struct {
-	mu sync.RWMutex
-
 	base      *os.File // Read-only base image
 	overlay   *os.File // Sparse overlay file
 	blockSize int64
 	size      int64
 
-	// Bitmap: 1 bit per block, O(1) dirty check
+	// Bitmap: 1 bit per block, O(1) dirty check (accessed atomically)
 	dirty []uint64
 
 	// Statistics
@@ -102,20 +103,27 @@ func NewCOWBackend(base *os.File, overlayPath string, size, blockSize int64) (*C
 	}, nil
 }
 
-// isBlockDirty checks if a block has been written (O(1)).
+// isBlockDirty checks if a block has been written (O(1), atomic).
 func (b *COWBackend) isBlockDirty(blockNum int64) bool {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	return b.dirty[idx]&bit != 0
+	return atomic.LoadUint64(&b.dirty[idx])&bit != 0
 }
 
-// markBlockDirty marks a block as written.
+// markBlockDirty atomically marks a block as written using CAS.
+// Returns true if the block was previously clean.
 func (b *COWBackend) markBlockDirty(blockNum int64) bool {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	wasClean := b.dirty[idx]&bit == 0
-	b.dirty[idx] |= bit
-	return wasClean
+	for {
+		old := atomic.LoadUint64(&b.dirty[idx])
+		if old&bit != 0 {
+			return false // already dirty
+		}
+		if atomic.CompareAndSwapUint64(&b.dirty[idx], old, old|bit) {
+			return true // was clean, now dirty
+		}
+	}
 }
 
 // classifyRange determines if a byte range is all dirty, all clean, or mixed.
@@ -143,9 +151,6 @@ func (b *COWBackend) classifyRange(offset, length int64) (allDirty, allClean boo
 
 // ReadAt implements io.ReaderAt with COW routing.
 func (b *COWBackend) ReadAt(p []byte, off int64) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	allDirty, allClean := b.classifyRange(off, int64(len(p)))
 
 	// Fast paths: entire range from single source
@@ -206,9 +211,6 @@ func (b *COWBackend) readMixed(p []byte, off int64) (int, error) {
 
 // WriteAt implements io.WriterAt, always writing to overlay.
 func (b *COWBackend) WriteAt(p []byte, off int64) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Write to overlay
 	n, err := b.overlay.WriteAt(p, off)
 	if err != nil {
@@ -233,8 +235,6 @@ func (b *COWBackend) WriteAt(p []byte, off int64) (int, error) {
 
 // Flush syncs the overlay to disk.
 func (b *COWBackend) Flush() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	return b.overlay.Sync()
 }
 
@@ -247,9 +247,6 @@ type DirtyExtent struct {
 // DirtyExtents returns all dirty regions using SEEK_HOLE/SEEK_DATA.
 // This is O(number of extents), not O(total blocks).
 func (b *COWBackend) DirtyExtents() ([]DirtyExtent, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var extents []DirtyExtent
 	offset := int64(0)
 	fd := int(b.overlay.Fd())
@@ -275,22 +272,20 @@ func (b *COWBackend) DirtyExtents() ([]DirtyExtent, error) {
 		offset = holeStart
 	}
 
-	return extents, nil
+	return extents, nil //nolint:nilerr // ENXIO from SEEK_DATA is expected (no more data)
 }
 
 // DirtyExtentsFromBitmap returns dirty regions by scanning the bitmap.
 // This is O(bitmap words) + O(dirty blocks).
 func (b *COWBackend) DirtyExtentsFromBitmap() []DirtyExtent {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var extents []DirtyExtent
 	inExtent := false
 	var extentStart int64
 
 	numBlocks := b.size / b.blockSize
 
-	for wordIdx, word := range b.dirty {
+	for wordIdx := range b.dirty {
+		word := atomic.LoadUint64(&b.dirty[wordIdx])
 		if word == 0 {
 			// Skip 64 clean blocks at once
 			if inExtent {
@@ -341,12 +336,9 @@ func (b *COWBackend) DirtyExtentsFromBitmap() []DirtyExtent {
 
 // DirtyBlockCount returns the number of dirty blocks using popcount.
 func (b *COWBackend) DirtyBlockCount() int64 {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var count int64
-	for _, word := range b.dirty {
-		count += int64(bits.OnesCount64(word))
+	for i := range b.dirty {
+		count += int64(bits.OnesCount64(atomic.LoadUint64(&b.dirty[i])))
 	}
 	return count
 }
@@ -363,9 +355,6 @@ func (b *COWBackend) ExportDiff(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 
 	buf := make([]byte, b.blockSize*256) // 1MB buffer
 

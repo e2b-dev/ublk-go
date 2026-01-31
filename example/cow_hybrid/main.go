@@ -236,14 +236,16 @@ func (b *CompressedBase) Stats() map[string]uint64 {
 // HybridCOWBackend combines:
 // - BaseImage (in-memory, potentially compressed) for clean blocks
 // - File overlay for dirty blocks (can use zero-copy).
+//
+// This implementation is lock-free:
+// - Bitmap uses atomic operations (no mutex needed)
+// - File I/O uses pread/pwrite which are atomic at kernel level.
 type HybridCOWBackend struct {
-	mu sync.RWMutex
-
 	base       BaseImage
 	overlay    *os.File
 	blockSize  int64
 	size       int64
-	dirty      []uint64
+	dirty      []uint64 // accessed atomically
 	dirtyCount atomic.Int64
 
 	// Stats
@@ -279,25 +281,33 @@ func NewHybridCOWBackend(base BaseImage, overlayPath string, blockSize int64) (*
 	}, nil
 }
 
+// isBlockDirty checks if a block is dirty using atomic load.
 func (b *HybridCOWBackend) isBlockDirty(blockNum int64) bool {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	return b.dirty[idx]&bit != 0
+	return atomic.LoadUint64(&b.dirty[idx])&bit != 0
 }
 
+// markBlockDirty atomically marks a block as dirty using CAS.
+// Returns true if the block was previously clean.
 func (b *HybridCOWBackend) markBlockDirty(blockNum int64) bool {
 	idx := blockNum / 64
 	bit := uint64(1) << (blockNum % 64)
-	wasClean := b.dirty[idx]&bit == 0
-	b.dirty[idx] |= bit
-	return wasClean
+	for {
+		old := atomic.LoadUint64(&b.dirty[idx])
+		if old&bit != 0 {
+			return false // already dirty
+		}
+		if atomic.CompareAndSwapUint64(&b.dirty[idx], old, old|bit) {
+			return true // was clean, now dirty
+		}
+		// CAS failed, retry
+	}
 }
 
 // ReadAt implements io.ReaderAt with proper routing.
+// Lock-free: bitmap uses atomics, file I/O uses pread (kernel-atomic).
 func (b *HybridCOWBackend) ReadAt(p []byte, off int64) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	startBlock := off / b.blockSize
 	endBlock := (off + int64(len(p)) + b.blockSize - 1) / b.blockSize
 
@@ -362,10 +372,8 @@ func (b *HybridCOWBackend) readMixed(p []byte, off int64) (int, error) {
 }
 
 // WriteAt always writes to overlay.
+// Lock-free: bitmap uses atomic CAS, file I/O uses pwrite (kernel-atomic).
 func (b *HybridCOWBackend) WriteAt(p []byte, off int64) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	n, err := b.overlay.WriteAt(p, off)
 	if err != nil {
 		return n, err
@@ -399,10 +407,8 @@ func (b *HybridCOWBackend) Overlay() (*os.File, error) {
 
 // ClassifyRange implements ublk.COWBackend.
 // Returns whether the range is all dirty, all clean, or mixed.
+// Lock-free: uses atomic bitmap loads.
 func (b *HybridCOWBackend) ClassifyRange(offset, length int64) (allDirty, allClean bool) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	startBlock := offset / b.blockSize
 	endBlock := (offset + length + b.blockSize - 1) / b.blockSize
 
@@ -426,28 +432,25 @@ func (b *HybridCOWBackend) ClassifyRange(offset, length int64) (allDirty, allCle
 // ReadBaseAt implements ublk.COWBackend.
 // Reads from the base (clean blocks).
 func (b *HybridCOWBackend) ReadBaseAt(p []byte, off int64) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 	b.readsBase.Add(1)
 	return b.base.ReadAt(p, off)
 }
 
 // DirtyExtents returns dirty regions using SEEK_HOLE/SEEK_DATA.
+// This queries the kernel's view of sparse file extents.
 func (b *HybridCOWBackend) DirtyExtents() ([]DirtyExtent, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var extents []DirtyExtent
 	offset := int64(0)
 	fd := int(b.overlay.Fd())
 
 	for offset < b.size {
-		dataStart, err := unix.Seek(fd, offset, unix.SEEK_DATA)
-		if err != nil {
+		dataStart, seekErr := unix.Seek(fd, offset, unix.SEEK_DATA)
+		if seekErr != nil {
+			// ENXIO means no more data regions, which is expected
 			break
 		}
-		holeStart, err := unix.Seek(fd, dataStart, unix.SEEK_HOLE)
-		if err != nil {
+		holeStart, seekErr := unix.Seek(fd, dataStart, unix.SEEK_HOLE)
+		if seekErr != nil {
 			holeStart = b.size
 		}
 		extents = append(extents, DirtyExtent{
@@ -456,20 +459,19 @@ func (b *HybridCOWBackend) DirtyExtents() ([]DirtyExtent, error) {
 		})
 		offset = holeStart
 	}
-	return extents, nil
+	return extents, nil //nolint:nilerr // seekErr from SEEK_DATA/SEEK_HOLE is expected (ENXIO = no more data)
 }
 
 // DirtyExtentsFromBitmap returns dirty regions from bitmap.
+// Uses atomic loads for each word, providing a point-in-time snapshot.
 func (b *HybridCOWBackend) DirtyExtentsFromBitmap() []DirtyExtent {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	var extents []DirtyExtent
 	inExtent := false
 	var extentStart int64
 	numBlocks := b.size / b.blockSize
 
-	for wordIdx, word := range b.dirty {
+	for wordIdx := range b.dirty {
+		word := atomic.LoadUint64(&b.dirty[wordIdx])
 		if word == 0 {
 			if inExtent {
 				extentEnd := int64(wordIdx) * 64 * b.blockSize
@@ -513,11 +515,9 @@ func (b *HybridCOWBackend) DirtyExtentsFromBitmap() []DirtyExtent {
 }
 
 func (b *HybridCOWBackend) DirtyBlockCount() int64 {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 	var count int64
-	for _, word := range b.dirty {
-		count += int64(bits.OnesCount64(word))
+	for i := range b.dirty {
+		count += int64(bits.OnesCount64(atomic.LoadUint64(&b.dirty[i])))
 	}
 	return count
 }
@@ -527,14 +527,12 @@ func (b *HybridCOWBackend) DirtyBytes() int64 {
 }
 
 // ExportDiff writes dirty data in a simple format.
+// Lock-free: reads from overlay using pread (kernel-atomic).
 func (b *HybridCOWBackend) ExportDiff(w io.Writer) error {
 	extents, err := b.DirtyExtents()
 	if err != nil {
 		return err
 	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
 
 	buf := make([]byte, 256*1024)
 	for _, ext := range extents {
