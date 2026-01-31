@@ -160,6 +160,7 @@ See [BUILD.md](BUILD.md) for build instructions and [ARCHITECTURE.md](ARCHITECTU
 - `example/zerocopy/` - Zero-copy backend using memfd
 - `example/cow_overlay/` - Simple copy-on-write overlay
 - `example/cow_zerocopy/` - Advanced COW with bitmap routing and diff extraction
+- `example/cow_hybrid/` - Hybrid COW: compressed/in-memory base + file overlay
 - `example/mmap_test/` - Memory-mapped device testing
 
 ## References
