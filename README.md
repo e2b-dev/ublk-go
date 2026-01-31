@@ -1,9 +1,7 @@
 # ublk-go
 
-[![Go Build](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go/ublk)
-[![Go Report Card](https://goreportcard.com/badge/github.com/e2b-dev/ublk-go)](https://goreportcard.com/report/github.com/e2b-dev/ublk-go)
-[![codecov](https://codecov.io/gh/e2b-dev/ublk-go/graph/badge.svg)](https://codecov.io/gh/e2b-dev/ublk-go)
+[![Go Build](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/e2b-dev/ublk-go/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go/ublk.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go/ublk)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A pure Go implementation of the Linux ublk (userspace block device) driver.
