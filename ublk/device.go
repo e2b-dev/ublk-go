@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"os"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -21,7 +22,6 @@ var (
 	controlDevicePath = "/dev/ublk-control" // overridable for tests
 )
 
-// Device manages the lifecycle of a ublk block device.
 type Device struct {
 	devID     int
 	controlFD *os.File
@@ -80,6 +80,12 @@ func WithCOW() DeviceOption {
 	}
 }
 
+func WithUnprivileged() DeviceOption {
+	return func(d *Device) {
+		d.flags |= UBLK_F_UNPRIVILEGED_DEV | UBLK_F_USER_COPY
+	}
+}
+
 func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error) {
 	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
 	if err != nil {
@@ -127,7 +133,6 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		maxIOBufBytes = 512 * 1024
 	}
 
-	// Try ioctl-encoded command first, fall back to legacy if needed
 	info := UblksrvCtrlDevInfo{
 		NrHWQueues:    nrHWQueues,
 		QueueDepth:    queueDepth,
@@ -142,6 +147,8 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		Len:     uint16(SizeOfCtrlDevInfo),
 	}
 
+	fmt.Printf("[DEBUG] Before ADD_DEV: info.DevID=%d, cmd.DevID=%d\n", info.DevID, cmd.DevID)
+	
 	err := d.ctrlCommand(uint32(UBLK_U_CMD_ADD_DEV), &cmd)
 	if err != nil {
 		info.Flags = d.flags
@@ -156,9 +163,13 @@ func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
 		d.ioctlEncoding = true
 	}
 
+	fmt.Printf("[DEBUG] After ADD_DEV: info.DevID=%d, info.State=%d\n", info.DevID, info.State)
+	
 	d.info = info
 	d.devID = int(info.DevID)
 	d.added = true
+
+	fmt.Printf("[DEBUG] ADD_DEV succeeded: devID=%d, ioctlEncoding=%v, flags=0x%x\n", d.devID, d.ioctlEncoding, d.flags)
 
 	return d.openCharDevice()
 }
@@ -170,15 +181,25 @@ func (d *Device) HasUserCopy() bool   { return d.flags&UBLK_F_USER_COPY != 0 }
 
 func (d *Device) openCharDevice() error {
 	charDevPath := fmt.Sprintf("/dev/ublkc%d", d.devID)
-	fd, err := os.OpenFile(charDevPath, os.O_RDWR, 0)
+	var fd *os.File
+	var err error
+	for range 50 { // wait up to 500ms for udev
+		fd, err = os.OpenFile(charDevPath, os.O_RDWR, 0)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to open char device %s: %w", charDevPath, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err != nil {
-		return fmt.Errorf("failed to open char device %s: %w", charDevPath, err)
+		return fmt.Errorf("char device %s not created by udev: %w", charDevPath, err)
 	}
 	d.charDevFD = fd
 	return nil
 }
 
-// SetParams configures the device parameters (UBLK_U_CMD_SET_PARAMS).
 func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32, discardSectors, discardSegs uint32) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -234,7 +255,6 @@ func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32, discardSec
 	return nil
 }
 
-// Start activates the device (UBLK_U_CMD_START_DEV) and starts IO workers.
 func (d *Device) Start() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -269,12 +289,9 @@ func (d *Device) Start() error {
 
 func (d *Device) startWorkers() error {
 	d.workers = make([]*ioWorker, d.info.NrHWQueues)
-
-	// Initialize all workers synchronously
 	for i := range int(d.info.NrHWQueues) {
 		worker := newIOWorker(d, uint16(i), d.info.QueueDepth)
 		if err := worker.Init(); err != nil {
-			// Cleanup already initialized workers
 			for j := range i {
 				if d.workers[j] != nil {
 					d.workers[j].Close()
@@ -284,8 +301,6 @@ func (d *Device) startWorkers() error {
 		}
 		d.workers[i] = worker
 	}
-
-	// Start event loops
 	for _, worker := range d.workers {
 		d.wg.Add(1)
 		go worker.Loop()
@@ -294,39 +309,33 @@ func (d *Device) startWorkers() error {
 	return nil
 }
 
-// Stop deactivates the device (UBLK_U_CMD_STOP_DEV) and stops IO workers.
 func (d *Device) Stop() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.stopLocked()
 }
 
-// stopLocked performs the actual stop logic. Caller must hold d.mu.
-func (d *Device) stopLocked() error {
+func (d *Device) stopLocked() error { // caller must hold d.mu
 	if !d.started || d.stopped {
 		return nil
 	}
 
-	// 1. Tell kernel to stop sending requests
 	cmd := UblksrvCtrlCmd{
 		DevID:   uint32(d.devID),
-		QueueID: ^uint16(0), // -1 for non-queue commands
+		QueueID: ^uint16(0),
 	}
 	var stopErr error
 	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_STOP_DEV), &cmd); err != nil {
 		stopErr = fmt.Errorf("UBLK_U_CMD_STOP_DEV failed: %w", err)
 	}
 
-	// 2. Signal workers to stop (only once)
 	if !d.stopped {
 		close(d.stopCh)
 		d.stopped = true
 	}
 
-	// 3. Wait for workers to exit
 	d.wg.Wait()
 
-	// Reset for potential restart
 	d.stopCh = make(chan struct{})
 	d.stopped = false
 	d.workers = nil
@@ -335,13 +344,11 @@ func (d *Device) stopLocked() error {
 	return stopErr
 }
 
-// Delete removes the device (UBLK_U_CMD_DEL_DEV) and closes file descriptors.
 func (d *Device) Delete() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.started {
-		// Try to stop gracefully, ignore errors as we are deleting
 		_ = d.stopLocked()
 	}
 
@@ -370,7 +377,6 @@ func (d *Device) Delete() error {
 	return nil
 }
 
-// BlockDevicePath returns the path to the block device (e.g., /dev/ublkb0).
 func (d *Device) BlockDevicePath() string {
 	if d.devID < 0 {
 		return ""
@@ -378,7 +384,6 @@ func (d *Device) BlockDevicePath() string {
 	return fmt.Sprintf("/dev/ublkb%d", d.devID)
 }
 
-// DeviceID returns the ublk device ID.
 func (d *Device) DeviceID() int {
 	return d.devID
 }
@@ -391,16 +396,7 @@ func (d *Device) blockSize() uint64 {
 	return 1 << shift
 }
 
-// Sync flushes all cached data to the backend and waits for acknowledgment.
-// This opens the block device, calls fsync(), and waits for completion.
-// When fsync is called, the kernel sends FLUSH requests through ublk,
-// which are handled by calling the backend's Flush() method (if implemented).
-//
-// This is a synchronous operation - when it returns successfully, all data
-// that was written before the call is guaranteed to be persisted to the
-// backend's stable storage.
-//
-// Returns an error if the device is not started or if fsync fails.
+// Sync opens the block device, calls fsync(), triggering FLUSH to backend.
 func (d *Device) Sync() error {
 	d.mu.RLock()
 	if !d.started {
@@ -410,14 +406,12 @@ func (d *Device) Sync() error {
 	devPath := d.BlockDevicePath()
 	d.mu.RUnlock()
 
-	// Open the block device
 	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open block device for sync: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 
-	// fsync triggers FLUSH requests through the block layer to ublk
 	if err := unix.Fsync(fd); err != nil {
 		return fmt.Errorf("fsync failed: %w", err)
 	}
@@ -425,22 +419,10 @@ func (d *Device) Sync() error {
 	return nil
 }
 
-// BLKFLSBUF is the ioctl number for flushing block device buffers.
 const ioctlBLKFLSBUF = 0x1261
 
-// FlushBuffers invalidates the kernel's buffer cache for this block device.
-// This uses the BLKFLSBUF ioctl to flush and invalidate cached data.
-//
-// Unlike Sync(), this does NOT send a FLUSH command to the backend.
-// It only clears the kernel's page cache for the device, which is useful for:
-//   - Invalidating stale cached reads after external changes
-//   - Preparing a device for removal
-//   - Testing/benchmarking without cache effects
-//
-// For durability guarantees (ensuring data reaches stable storage),
-// use Sync() instead.
-//
-// Returns an error if the device is not started or if the ioctl fails.
+// FlushBuffers clears kernel page cache for this device (BLKFLSBUF ioctl).
+// Unlike Sync(), this does NOT send FLUSH to the backend.
 func (d *Device) FlushBuffers() error {
 	d.mu.RLock()
 	if !d.started {
@@ -450,14 +432,12 @@ func (d *Device) FlushBuffers() error {
 	devPath := d.BlockDevicePath()
 	d.mu.RUnlock()
 
-	// Open the block device
 	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open block device for buffer flush: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 
-	// BLKFLSBUF flushes the buffer cache (does not send FLUSH to device)
 	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), ioctlBLKFLSBUF, 0); errno != 0 {
 		return fmt.Errorf("BLKFLSBUF ioctl failed: %w", errno)
 	}
@@ -465,7 +445,6 @@ func (d *Device) FlushBuffers() error {
 	return nil
 }
 
-// ctrlCommand executes a control command via io_uring.
 func (d *Device) ctrlCommand(cmdOp uint32, cmd *UblksrvCtrlCmd) error {
 	if d.controlFD == nil {
 		return errors.New("control device closed")
@@ -473,15 +452,10 @@ func (d *Device) ctrlCommand(cmdOp uint32, cmd *UblksrvCtrlCmd) error {
 	return ctrlCmd(d.controlFD, cmdOp, cmd)
 }
 
-// cmdOpFor returns the appropriate command opcode based on whether
-// ioctl encoding is being used. The input should be the ioctl-encoded
-// command (UBLK_U_CMD_*); if legacy mode is active, it returns the
-// raw command number.
 func (d *Device) cmdOpFor(ioctlEncodedCmd uintptr) uint32 {
 	if d.ioctlEncoding {
 		return uint32(ioctlEncodedCmd)
 	}
-	// Map ioctl-encoded commands to legacy raw commands
 	switch ioctlEncodedCmd {
 	case UBLK_U_CMD_SET_PARAMS:
 		return UBLK_CMD_SET_PARAMS
@@ -494,7 +468,6 @@ func (d *Device) cmdOpFor(ioctlEncodedCmd uintptr) uint32 {
 	case UBLK_U_CMD_DEL_DEV:
 		return UBLK_CMD_DEL_DEV
 	default:
-		// Unknown command, return as-is
 		return uint32(ioctlEncodedCmd)
 	}
 }

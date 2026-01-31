@@ -13,7 +13,7 @@ import (
 func TestIOWorkerGetSetIODesc(t *testing.T) {
 	t.Parallel()
 	w := &ioWorker{queueDepth: 4}
-	w.mmapAddr = make([]byte, int(unsafe.Sizeof(UblksrvIODesc{}))*4)
+	w.mmapAddr = make([]byte, int(SizeOfUblksrvIODesc)*4)
 
 	desc := UblksrvIODesc{Addr: 0x12345678, NrSectors: 8, StartSector: 100, OpFlags: UBLK_IO_F_FUA}
 	w.setIODesc(2, desc)
@@ -34,7 +34,7 @@ func TestIOWorkerDescBoundaryConditions(t *testing.T) {
 
 	// Out of bounds should not panic
 	w2 := &ioWorker{queueDepth: 2}
-	w2.mmapAddr = make([]byte, int(unsafe.Sizeof(UblksrvIODesc{}))) // Only 1 descriptor
+	w2.mmapAddr = make([]byte, int(SizeOfUblksrvIODesc)) // Only 1 descriptor
 	assert.Zero(t, w2.getIODesc(1).Addr)
 	w2.setIODesc(1, UblksrvIODesc{Addr: 123}) // Should not panic
 }
@@ -44,7 +44,7 @@ func (w *ioWorker) setIODesc(tag uint16, desc UblksrvIODesc) {
 	if w.mmapAddr == nil {
 		return
 	}
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
+	descSize := int(SizeOfUblksrvIODesc)
 	offset := int(tag) * descSize
 	if offset+descSize > len(w.mmapAddr) {
 		return

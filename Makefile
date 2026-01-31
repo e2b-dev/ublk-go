@@ -1,10 +1,7 @@
-.PHONY: test bench build clean
+.PHONY: test build clean
 
 test:
 	go test ./... -count=1
-
-bench:
-	go test ./ublk -bench=. -benchmem -run=^$$
 
 build:
 	go build -race ./...

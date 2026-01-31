@@ -10,12 +10,9 @@ import (
 )
 
 const (
-	IOResultOK      int32 = 0
-	IOResultEIO     int32 = 5
-	IOResultENOTSUP int32 = 95
-)
-
-const (
+	IOResultOK       int32  = 0
+	IOResultEIO      int32  = 5
+	IOResultENOTSUP  int32  = 95
 	userDataDataFlag uint64 = 1 << 63
 )
 
@@ -228,7 +225,6 @@ func (w *ioWorker) initZeroCopy() error {
 	return nil
 }
 
-// initCOWBackend initializes COW backend support.
 func (w *ioWorker) initCOWBackend() error {
 	if !w.device.cow {
 		return nil
@@ -253,7 +249,6 @@ func (w *ioWorker) initCOWBackend() error {
 	w.cowBackend = cow
 	w.cowOverlayFD = int(overlay.Fd())
 
-	// Create a secondary ring for zero-copy overlay I/O
 	entries := max(uint(w.queueDepth), 2)
 	zcRing, err := NewRingWithOptions(entries, 0, WithSingleIssuer(), WithDeferTaskrun(), WithSQE128())
 	if err != nil {
@@ -263,13 +258,11 @@ func (w *ioWorker) initCOWBackend() error {
 		}
 	}
 
-	// Register the overlay file for fixed file operations
 	if err := zcRing.RegisterFiles([]int{w.cowOverlayFD}); err != nil {
 		_ = zcRing.Close()
 		return fmt.Errorf("failed to register overlay file: %w", err)
 	}
 
-	// Register sparse buffers for zero-copy
 	if err := zcRing.RegisterSparseBuffers(uint32(w.queueDepth)); err != nil {
 		_ = zcRing.Close()
 		return fmt.Errorf("failed to register sparse buffers: %w", err)
@@ -296,16 +289,10 @@ func (w *ioWorker) makeAlignedPool(size int) []byte {
 // Loop runs the main event loop.
 func (w *ioWorker) Loop() {
 	defer w.device.wg.Done()
-	// Ensure cleanup if Loop exits (though Device.Stop handles graceful shutdown)
-	// We rely on Device.Stop to close resources via Stop -> workers=nil
-
+	defer w.Close()
 	w.eventLoop()
-
-	// Cleanup after loop exits
-	w.Close()
 }
 
-// submitAllFetchRequests submits FETCH_REQ for all tags in the queue.
 func (w *ioWorker) submitAllFetchRequests() error {
 	for tag := range w.queueDepth {
 		if err := w.submitFetchReq(tag); err != nil {
@@ -321,10 +308,7 @@ func (w *ioWorker) submitAllFetchRequests() error {
 	return nil
 }
 
-// eventLoop processes completions and handles IO requests.
-// This is the main loop that runs until the device is stopped.
 func (w *ioWorker) eventLoop() {
-	// Batch processing: handle multiple CQEs before submitting
 	const maxBatch = 16
 	pendingSubmit := 0
 
@@ -425,7 +409,6 @@ func (w *ioWorker) handleRequest(tag uint16) (int32, bool) {
 		return w.executeZeroCopy(op, desc.OpFlags, offset, length, tag), false
 	}
 
-	// COW backend: route based on dirty state
 	if w.cowBackend != nil && (op == UBLK_IO_OP_READ || op == UBLK_IO_OP_WRITE) {
 		return w.executeCOW(op, desc.OpFlags, offset, length, tag), false
 	}
@@ -475,36 +458,25 @@ func (w *ioWorker) executeZeroCopy(op uint8, flags uint32, offset int64, length 
 	return res
 }
 
-// executeCOW handles COW requests with hybrid zero-copy/user-copy routing.
-// - Writes: zero-copy to overlay
-// - Dirty reads: zero-copy from overlay
-// - Clean reads: user-copy from base via ReadCleanAt
-// - Mixed reads: user-copy (could be optimized to split).
 func (w *ioWorker) executeCOW(op uint8, flags uint32, offset int64, length int, tag uint16) int32 {
 	if w.cowBackend == nil || w.zcRing == nil {
 		return IOResultEIO
 	}
 
-	// Writes always go to overlay (zero-copy)
 	if op == UBLK_IO_OP_WRITE {
 		return w.cowWriteOverlay(flags, offset, length, tag)
 	}
 
-	// Read: check dirty state
 	allDirty, allClean := w.cowBackend.ClassifyRange(offset, int64(length))
 
 	if allDirty {
-		// All dirty: zero-copy from overlay
 		return w.cowReadOverlay(flags, offset, length, tag)
 	}
 
 	if allClean {
-		// All clean: user-copy from base
 		return w.cowReadBase(flags, offset, length, tag)
 	}
 
-	// Mixed: user-copy for now (could optimize with split later)
-	// This reads from both sources and assembles in buffer
 	return w.cowReadMixed(flags, offset, length, tag)
 }
 
@@ -571,7 +543,6 @@ func (w *ioWorker) cowReadMixed(_ uint32, offset int64, length int, tag uint16) 
 	return IOResultOK
 }
 
-// cowFixedIO performs fixed I/O to overlay via io_uring.
 func (w *ioWorker) cowFixedIO(op uint8, offset int64, length int, bufIndex uint16) int32 {
 	sqe, err := w.zcRing.GetSQE()
 	if err != nil {
@@ -594,7 +565,6 @@ func (w *ioWorker) cowFixedIO(op uint8, offset int64, length int, bufIndex uint1
 	sqe.Flags = IOSQE_FIXED_FILE
 	sqe.UserData = uint64(bufIndex)
 
-	// Submit and wait
 	if _, err := w.zcRing.Submit(); err != nil {
 		return IOResultEIO
 	}
@@ -684,12 +654,10 @@ func (w *ioWorker) finishAutoDataIO(tag uint16, cqeRes int32) int32 {
 }
 
 func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, tag uint16) int32 {
-	// Check for FUA flag
 	isFua := (flags & UBLK_IO_F_FUA) != 0
 
 	switch op {
 	case UBLK_IO_OP_READ:
-		// Sparse optimization: return zeros for empty regions without I/O
 		if w.sparseReader != nil && len(buf) > 0 && w.sparseReader.IsZeroRegion(offset, int64(len(buf))) {
 			clear(buf)
 			if w.userCopy {
@@ -701,7 +669,6 @@ func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, t
 			return IOResultOK
 		}
 
-		// READ: Server reads from backend -> User Buffer
 		var n int
 		var err error
 		if rwf, ok := w.device.backend.(ReaderWithFlags); ok {
@@ -738,7 +705,6 @@ func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, t
 			}
 		}
 
-		// Handle FUA optimization
 		if isFua {
 			if fuaWriter, ok := w.device.backend.(FuaWriter); ok {
 				n, err = fuaWriter.WriteFua(buf, offset)
@@ -749,7 +715,6 @@ func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, t
 			}
 		}
 
-		// Normal Write (with flags if supported)
 		if wwf, ok := w.device.backend.(WriterWithFlags); ok {
 			n, err = wwf.WriteAtWithFlags(buf, offset, flags)
 		} else {
@@ -760,7 +725,6 @@ func (w *ioWorker) executeIO(op uint8, flags uint32, buf []byte, offset int64, t
 			return IOResultEIO
 		}
 
-		// Fallback FUA: Flush after write
 		if isFua {
 			if flusher, ok := w.device.backend.(Flusher); ok {
 				if err := flusher.Flush(); err != nil {
@@ -830,7 +794,7 @@ func (w *ioWorker) submitZCUringCmd(cmd *UblkIOCommand, op uint32) error {
 	sqe.Opcode = IORING_OP_URING_CMD
 	sqe.Off = uint64(op)
 	copy(sqe.Cmd[:], cmdData)
-	sqe.Len = uint32(cmd.Size())
+	sqe.Len = uint32(SizeOfUblkIOCommand)
 	sqe.Fd = int32(w.device.charDevFD.Fd())
 
 	if _, err := w.zcRing.Submit(); err != nil {
@@ -900,7 +864,6 @@ func (w *ioWorker) zcFixedIO(op uint8, offset int64, length int, bufIndex uint16
 	return IOResultOK
 }
 
-// submitFetchReq prepares a FETCH_REQ SQE for a tag.
 func (w *ioWorker) submitFetchReq(tag uint16) error {
 	sqe, err := w.ring.GetSQE128()
 	if err != nil {
@@ -913,7 +876,6 @@ func (w *ioWorker) submitFetchReq(tag uint16) error {
 	return nil
 }
 
-// submitCommitAndFetch prepares a COMMIT_AND_FETCH_REQ SQE for a tag.
 func (w *ioWorker) submitCommitAndFetch(tag uint16, result int32) error {
 	sqe, err := w.ring.GetSQE128()
 	if err != nil {
@@ -926,24 +888,20 @@ func (w *ioWorker) submitCommitAndFetch(tag uint16, result int32) error {
 	return nil
 }
 
-// prepareSQE fills in an SQE with a ublk command.
 func (w *ioWorker) prepareSQE(sqe *UringSQE128, cmd *UblkIOCommand, op uint32, tag uint16) {
 	cmdData := cmd.ToBytes()
 
 	sqe.Opcode = IORING_OP_URING_CMD
 	sqe.Off = uint64(op) // cmd_op is in lower 32 bits of off field
 
-	// For SQE128, command goes into sqe.Cmd (offset 48-128), not Addr.
-	// ublk driver expects the command structure in the second half of SQE.
 	copy(sqe.Cmd[:], cmdData)
 
-	sqe.Len = uint32(cmd.Size()) // Still set len just in case
+	sqe.Len = uint32(SizeOfUblkIOCommand) // Still set len just in case
 	sqe.UserData = uint64(tag)
 	if w.autoBufReg && (op == uint32(UBLK_U_IO_FETCH_REQ) || op == uint32(UBLK_U_IO_COMMIT_AND_FETCH_REQ)) {
 		sqe.Addr = autoBufRegAddr(tag, 0)
 	}
 
-	// Use fixed file if registered (reduces per-IO overhead)
 	if w.ring.HasFixedFiles() {
 		sqe.Fd = 0 // Index into registered files array
 		sqe.Flags = IOSQE_FIXED_FILE
@@ -972,9 +930,7 @@ func (w *ioWorker) ioBufferAddr(tag uint16) uint64 {
 }
 
 func (w *ioWorker) mmapIODescs() error {
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
-	// We only map the descriptor area. The driver writes to this area, we read from it.
-	// For USER_COPY, data is transferred via pread/pwrite, so we don't need to map the IO buffer area.
+	descSize := int(SizeOfUblksrvIODesc)
 	totalSize := int(w.queueDepth) * descSize
 
 	mmapAddr, err := unix.Mmap(
@@ -1003,7 +959,7 @@ func (w *ioWorker) getIODesc(tag uint16) UblksrvIODesc {
 	if w.mmapAddr == nil {
 		return UblksrvIODesc{}
 	}
-	descSize := int(unsafe.Sizeof(UblksrvIODesc{}))
+	descSize := int(SizeOfUblksrvIODesc)
 	offset := int(tag) * descSize
 	if offset+descSize > len(w.mmapAddr) {
 		return UblksrvIODesc{}
@@ -1011,5 +967,4 @@ func (w *ioWorker) getIODesc(tag uint16) UblksrvIODesc {
 	return *(*UblksrvIODesc)(unsafe.Pointer(&w.mmapAddr[offset]))
 }
 
-// ErrRingNotInitialized is returned when ring operations are attempted before initialization.
 var ErrRingNotInitialized = errors.New("io_uring not initialized")

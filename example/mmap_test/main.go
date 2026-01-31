@@ -112,7 +112,7 @@ func main() {
 	config.BlockSize = blockSize
 	config.NrHWQueues = 1
 	config.QueueDepth = 64
-	// Note: Requires root/CAP_SYS_ADMIN to create ublk devices
+	// config.Unprivileged = true // disabled for now
 
 	dev, err := ublk.New(backend, config)
 	if err != nil {

@@ -1,23 +1,24 @@
 package ublk
 
+import "unsafe"
+
 const (
 	UBLK_IO_OP_READ         = 0
 	UBLK_IO_OP_WRITE        = 1
 	UBLK_IO_OP_FLUSH        = 2
 	UBLK_IO_OP_DISCARD      = 3
 	UBLK_IO_OP_WRITE_ZEROES = 5
-)
 
-const UBLK_IO_F_FUA = 1 << 13
+	UBLK_IO_F_FUA = 1 << 13
 
-const (
-	UBLK_F_SUPPORT_ZERO_COPY = 1 << 0
-	UBLK_F_CMD_IOCTL_ENCODE  = 1 << 6
-	UBLK_F_USER_COPY         = 1 << 7
-	UBLK_F_AUTO_BUF_REG      = 1 << 11
-)
+	UBLK_F_SUPPORT_ZERO_COPY     = 1 << 0
+	UBLK_F_UNPRIVILEGED_DEV      = 1 << 4
+	UBLK_F_CMD_IOCTL_ENCODE      = 1 << 6
+	UBLK_F_USER_COPY             = 1 << 7
+	UBLK_F_USER_RECOVERY         = 1 << 8
+	UBLK_F_USER_RECOVERY_REISSUE = 1 << 9
+	UBLK_F_AUTO_BUF_REG          = 1 << 11
 
-const (
 	UBLK_MAX_QUEUE_DEPTH  = 4096
 	UBLK_IO_BUF_BITS      = 25
 	UBLK_TAG_BITS         = 16
@@ -25,29 +26,26 @@ const (
 	UBLK_TAG_OFF          = UBLK_IO_BUF_BITS
 	UBLK_QID_OFF          = UBLK_TAG_OFF + UBLK_TAG_BITS
 	UBLKSRV_IO_BUF_OFFSET = 0x80000000
-)
 
-func ublkUserCopyPos(qid, tag uint16) int64 {
-	return int64(UBLKSRV_IO_BUF_OFFSET) +
-		((int64(qid) << UBLK_QID_OFF) |
-			(int64(tag) << UBLK_TAG_OFF))
-}
-
-const (
 	UBLK_PARAM_TYPE_BASIC   = 1 << 0
 	UBLK_PARAM_TYPE_DISCARD = 1 << 1
 )
 
-type UblkParams struct {
-	Len   uint32
-	Types uint32
+func ublkUserCopyPos(qid, tag uint16) int64 {
+	return int64(UBLKSRV_IO_BUF_OFFSET) + (int64(qid)<<UBLK_QID_OFF | int64(tag)<<UBLK_TAG_OFF)
+}
 
-	Basic    UblkParamBasic
-	Discard  UblkParamDiscard
-	Devt     UblkParamDevt
-	Zoned    UblkParamZoned
+type UblkParams struct {
+	Len     uint32
+	Types   uint32
+	Basic   UblkParamBasic
+	Discard UblkParamDiscard
+	Devt    UblkParamDevt
+	Zoned   UblkParamZoned
+
 	DMAAlign UblkParamDMAAlign
-	Segment  UblkParamSegment
+
+	Segment UblkParamSegment
 }
 
 type UblkParamBasic struct {
@@ -105,6 +103,8 @@ type UblksrvIODesc struct {
 	StartSector uint64
 	Addr        uint64
 }
+
+const SizeOfUblksrvIODesc = unsafe.Sizeof(UblksrvIODesc{})
 
 type UblkQueueAffinity struct {
 	QID      uint16

@@ -8,15 +8,12 @@ import (
 	"unsafe"
 )
 
-// controlRing is an io_uring instance dedicated to control commands.
-// ublk control commands must be submitted via io_uring URING_CMD, not ioctl.
 type controlRing struct {
 	ring *Ring
 	mu   sync.Mutex
 }
 
 func newControlRing(entries uint32) (*controlRing, error) {
-	// Initialize ring with SQE128 support
 	ring, err := NewRingWithOptions(uint(entries), 0, WithSQE128())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create control ring: %w", err)
@@ -27,12 +24,10 @@ func newControlRing(entries uint32) (*controlRing, error) {
 	}, nil
 }
 
-// submitCmd submits a control command via io_uring and waits for completion.
 func (r *controlRing) submitCmd(ctrlFd int, cmdOp uint32, cmd *UblksrvCtrlCmd) (int32, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// getSQE128
 	sqe, err := r.ring.GetSQE128()
 	if err != nil {
 		return 0, fmt.Errorf("GetSQE128 failed: %w", err)
@@ -40,19 +35,13 @@ func (r *controlRing) submitCmd(ctrlFd int, cmdOp uint32, cmd *UblksrvCtrlCmd) (
 
 	sqe.Opcode = IORING_OP_URING_CMD
 	sqe.Fd = int32(ctrlFd)
-	sqe.Off = uint64(cmdOp) // cmd_op is in lower 32 bits of off field
-	// Note: sqe.Len is not used by ublk for control commands
+	sqe.Off = uint64(cmdOp)
+	sqe.Addr = uint64(uintptr(unsafe.Pointer(cmd))) // Point to cmd in userspace
 
-	// Copy command data to the extended area (sqe->cmd[])
-	cmdBytes := (*[unsafe.Sizeof(UblksrvCtrlCmd{})]byte)(unsafe.Pointer(cmd))[:]
-	copy(sqe.Cmd[:], cmdBytes)
-
-	// Submit
 	if _, err := r.ring.Submit(); err != nil {
 		return 0, fmt.Errorf("submit failed: %w", err)
 	}
 
-	// Wait for completion
 	cqe, err := r.ring.WaitCQE()
 	if err != nil {
 		return 0, fmt.Errorf("WaitCQE failed: %w", err)
@@ -68,7 +57,6 @@ func (r *controlRing) submitCmd(ctrlFd int, cmdOp uint32, cmd *UblksrvCtrlCmd) (
 	return res, nil
 }
 
-// ctrlRingCache provides a lazily-initialized control ring.
 var (
 	ctrlRingCache     *controlRing
 	ctrlRingCacheOnce sync.Once
@@ -82,17 +70,12 @@ func getControlRing() (*controlRing, error) {
 	return ctrlRingCache, errCtrlRingCache
 }
 
-// ctrlCmd executes a control command on the given control file.
 func ctrlCmd(ctrl *os.File, cmdOp uint32, cmd *UblksrvCtrlCmd) error {
 	ring, err := getControlRing()
 	if err != nil {
 		return fmt.Errorf("get control ring: %w", err)
 	}
-
 	res, err := ring.submitCmd(int(ctrl.Fd()), cmdOp, cmd)
-	if err != nil {
-		return err
-	}
-	_ = res // Success
-	return nil
+	fmt.Printf("[DEBUG] ctrlCmd op=0x%x res=%d err=%v\n", cmdOp, res, err)
+	return err
 }
