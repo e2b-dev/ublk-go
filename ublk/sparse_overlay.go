@@ -46,6 +46,15 @@ type Extent struct {
 	Length int64
 }
 
+// Segment represents a contiguous region with uniform dirty/clean status.
+// Used for batched mixed reads - each segment can be read in a single I/O.
+type Segment struct {
+	Offset   int64 // Offset in the file/device
+	Length   int64 // Length of this segment
+	BufOff   int64 // Offset into the target buffer
+	FromBase bool  // true = read from base (clean), false = read from overlay (dirty)
+}
+
 // NewSparseOverlay creates a new sparse overlay file.
 // The file is created/truncated at the given path with the specified size.
 func NewSparseOverlay(path string, size int64) (*SparseOverlay, error) {
@@ -163,6 +172,88 @@ func (s *SparseOverlay) ClassifyRange(off, length int64) (allDirty, allClean boo
 func (s *SparseOverlay) IsDirty(off, length int64) bool {
 	allDirty, allClean := s.ClassifyRange(off, length)
 	return allDirty || (!allClean) // dirty if not all clean
+}
+
+// SegmentRange partitions a byte range into contiguous segments, each either
+// entirely dirty (overlay) or entirely clean (base). This enables batched
+// I/O for mixed reads - instead of reading block-by-block, read each segment
+// in a single operation.
+//
+// Example: a range with pattern base-base-dirty-dirty-base yields 3 segments:
+//
+//	for seg := range overlay.SegmentRange(off, length) {
+//	    if seg.FromBase {
+//	        base.ReadAt(buf[seg.BufOff:seg.BufOff+seg.Length], seg.Offset)
+//	    } else {
+//	        overlay.ReadAt(buf[seg.BufOff:seg.BufOff+seg.Length], seg.Offset)
+//	    }
+//	}
+func (s *SparseOverlay) SegmentRange(off, length int64) iter.Seq[Segment] {
+	return func(yield func(Segment) bool) {
+		if length <= 0 {
+			return
+		}
+
+		fd := int(s.file.Fd())
+		end := off + length
+		pos := off
+		bufOff := int64(0)
+
+		for pos < end {
+			// Try to find data at current position
+			dataStart, err := unix.Seek(fd, pos, unix.SEEK_DATA)
+
+			if err != nil || dataStart >= end {
+				// No more data in range - rest is clean (base)
+				if !yield(Segment{
+					Offset:   pos,
+					Length:   end - pos,
+					BufOff:   bufOff,
+					FromBase: true,
+				}) {
+					return
+				}
+				return
+			}
+
+			// If there's a hole before data, emit base segment
+			if dataStart > pos {
+				holeLen := min(dataStart, end) - pos
+				if !yield(Segment{
+					Offset:   pos,
+					Length:   holeLen,
+					BufOff:   bufOff,
+					FromBase: true,
+				}) {
+					return
+				}
+				bufOff += holeLen
+				pos = dataStart
+				if pos >= end {
+					return
+				}
+			}
+
+			// Find where data ends (next hole)
+			holeStart, err := unix.Seek(fd, pos, unix.SEEK_HOLE)
+			if err != nil {
+				holeStart = s.size
+			}
+
+			// Emit overlay segment
+			dataLen := min(holeStart, end) - pos
+			if !yield(Segment{
+				Offset:   pos,
+				Length:   dataLen,
+				BufOff:   bufOff,
+				FromBase: false,
+			}) {
+				return
+			}
+			bufOff += dataLen
+			pos += dataLen
+		}
+	}
 }
 
 // IsClean checks if the entire range is unwritten (hole).
@@ -309,4 +400,95 @@ func putUint64LE(b []byte, v uint64) {
 	b[5] = byte(v >> 40)
 	b[6] = byte(v >> 48)
 	b[7] = byte(v >> 56)
+}
+
+// SegmentRangeFromBitmap partitions a byte range into contiguous segments
+// based on an in-memory dirty bitmap. Each segment is either entirely dirty
+// (overlay) or entirely clean (base).
+//
+// Parameters:
+//   - off: starting offset in bytes
+//   - length: range length in bytes
+//   - blockSize: size of each block in the bitmap
+//   - isDirty: function that returns true if a block index is dirty
+//
+// Example with atomic bitmap:
+//
+//	isDirty := func(blockIdx int64) bool {
+//	    word := atomic.LoadUint64(&bitmap[blockIdx/64])
+//	    return word&(1<<(blockIdx%64)) != 0
+//	}
+//	for seg := range ublk.SegmentRangeFromBitmap(off, length, blockSize, isDirty) {
+//	    // process segment
+//	}
+func SegmentRangeFromBitmap(off, length, blockSize int64, isDirty func(blockIdx int64) bool) iter.Seq[Segment] {
+	return func(yield func(Segment) bool) {
+		if length <= 0 {
+			return
+		}
+
+		end := off + length
+		pos := off
+		bufOff := int64(0)
+
+		for pos < end {
+			startBlock := pos / blockSize
+			currentDirty := isDirty(startBlock)
+			segStart := pos
+
+			// Extend segment while blocks have same dirty status
+			for pos < end {
+				blockIdx := pos / blockSize
+				if isDirty(blockIdx) != currentDirty {
+					break
+				}
+				// Move to next block boundary or end
+				nextBoundary := (blockIdx + 1) * blockSize
+				pos = min(nextBoundary, end)
+			}
+
+			if !yield(Segment{
+				Offset:   segStart,
+				Length:   pos - segStart,
+				BufOff:   bufOff,
+				FromBase: !currentDirty,
+			}) {
+				return
+			}
+			bufOff += pos - segStart
+		}
+	}
+}
+
+// ReadMixed reads a mixed range by batching contiguous segments from the same source.
+// This is a convenience wrapper around SegmentRange that performs the actual reads.
+//
+// Parameters:
+//   - buf: destination buffer
+//   - off: starting offset
+//   - overlay: sparse overlay for dirty regions
+//   - baseReader: reader for clean regions (typically the base image)
+//
+// Returns the number of bytes read and any error.
+func (s *SparseOverlay) ReadMixed(buf []byte, off int64, baseReader io.ReaderAt) (int, error) {
+	totalRead := 0
+
+	for seg := range s.SegmentRange(off, int64(len(buf))) {
+		segBuf := buf[seg.BufOff : seg.BufOff+seg.Length]
+		var n int
+		var err error
+
+		if seg.FromBase {
+			n, err = baseReader.ReadAt(segBuf, seg.Offset)
+		} else {
+			n, err = s.file.ReadAt(segBuf, seg.Offset)
+		}
+
+		totalRead += n
+		if err != nil && err != io.EOF {
+			return totalRead, err
+		}
+	}
+
+	return totalRead, nil
 }
