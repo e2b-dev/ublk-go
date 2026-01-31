@@ -391,15 +391,15 @@ func (b *HybridCOWBackend) Flush() error {
 	return b.overlay.Sync()
 }
 
-// OverlayFile implements ublk.COWBackend.
-// Returns the overlay file for zero-copy operations.
-func (b *HybridCOWBackend) OverlayFile() (*os.File, error) {
+// Overlay implements ublk.COWBackend.
+// Returns the overlay file for zero-copy I/O.
+func (b *HybridCOWBackend) Overlay() (*os.File, error) {
 	return b.overlay, nil
 }
 
-// IsRangeDirty implements ublk.COWBackend.
+// ClassifyRange implements ublk.COWBackend.
 // Returns whether the range is all dirty, all clean, or mixed.
-func (b *HybridCOWBackend) IsRangeDirty(offset, length int64) (allDirty, allClean bool) {
+func (b *HybridCOWBackend) ClassifyRange(offset, length int64) (allDirty, allClean bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -423,9 +423,9 @@ func (b *HybridCOWBackend) IsRangeDirty(offset, length int64) (allDirty, allClea
 	return allDirty, allClean
 }
 
-// ReadCleanAt implements ublk.COWBackend.
+// ReadBaseAt implements ublk.COWBackend.
 // Reads from the base (clean blocks).
-func (b *HybridCOWBackend) ReadCleanAt(p []byte, off int64) (int, error) {
+func (b *HybridCOWBackend) ReadBaseAt(p []byte, off int64) (int, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	b.readsBase.Add(1)
@@ -625,15 +625,14 @@ func main() {
 	log.Printf("Overlay: %s (sparse)", overlayPath)
 	log.Printf("Block size: %d, Total blocks: %d", blockSize, size/blockSize)
 
-	// Create ublk device.
-	// Use HybridCOW mode for optimal performance:
-	// - Clean block reads: user-copy from base (unavoidable - base is in memory)
+	// Create ublk device with COW mode for optimal performance:
+	// - Clean block reads: user-copy from base (unavoidable - in memory)
 	// - Dirty block reads: zero-copy from overlay file
 	// - Writes: zero-copy to overlay file
 	config := ublk.DefaultConfig()
 	config.Size = uint64(size)
 	config.BlockSize = uint64(blockSize)
-	config.HybridCOW = true
+	config.COW = true
 
 	dev, err := ublk.CreateDevice(backend, config)
 	if err != nil {
@@ -647,7 +646,7 @@ func main() {
 	log.Println("  Base: In-memory, compressed (decompressed on-demand)")
 	log.Println("  Overlay: Sparse file (dirty blocks)")
 	log.Println()
-	log.Println("HybridCOW mode enabled:")
+	log.Println("COW mode enabled:")
 	log.Println("  - Base reads: user-copy (data in memory, not file fd)")
 	log.Println("  - Overlay reads: ZERO-COPY via io_uring")
 	log.Println("  - Writes: ZERO-COPY via io_uring")

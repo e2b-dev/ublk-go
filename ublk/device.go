@@ -52,8 +52,8 @@ type Device struct {
 	writeAt func([]byte, int64) (int, error)
 
 	// Feature flags
-	flags     uint64
-	hybridCOW bool // COW mode: zero-copy overlay + user-copy base
+	flags uint64
+	cow   bool // COW mode: zero-copy overlay + user-copy base
 
 	// Statistics
 	stats Stats
@@ -112,12 +112,12 @@ func WithMaxIOBufBytes(size uint32) DeviceOption {
 	}
 }
 
-// WithHybridCOW marks the device for hybrid COW mode.
-// This mode uses zero-copy for overlay operations and user-copy for base reads.
+// WithCOW enables copy-on-write mode.
+// Uses zero-copy for overlay I/O and user-copy for base reads.
 // Requires a backend that implements COWBackend.
-func WithHybridCOW() DeviceOption {
+func WithCOW() DeviceOption {
 	return func(d *Device) {
-		d.hybridCOW = true
+		d.cow = true
 	}
 }
 

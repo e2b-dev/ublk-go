@@ -251,30 +251,30 @@ func (w *ioWorker) initZeroCopy() error {
 	return nil
 }
 
-// initCOWBackend initializes COW backend support for hybrid zero-copy.
+// initCOWBackend initializes COW backend support.
 func (w *ioWorker) initCOWBackend() error {
-	if !w.device.hybridCOW {
+	if !w.device.cow {
 		return nil
 	}
 	if w.device.backend == nil {
-		return errors.New("HybridCOW requires backend")
+		return errors.New("COW requires backend")
 	}
 
 	cow, ok := w.device.backend.(COWBackend)
 	if !ok {
-		return errors.New("HybridCOW requires COWBackend interface")
+		return errors.New("COW requires COWBackend interface")
 	}
 
-	overlayFile, err := cow.OverlayFile()
+	overlay, err := cow.Overlay()
 	if err != nil {
-		return fmt.Errorf("failed to get overlay file: %w", err)
+		return fmt.Errorf("failed to get overlay: %w", err)
 	}
-	if overlayFile == nil {
-		return errors.New("overlay file is nil")
+	if overlay == nil {
+		return errors.New("overlay is nil")
 	}
 
 	w.cowBackend = cow
-	w.cowOverlayFD = int(overlayFile.Fd())
+	w.cowOverlayFD = int(overlay.Fd())
 
 	// Create a secondary ring for zero-copy overlay I/O
 	entries := max(uint(w.queueDepth), 2)
@@ -559,7 +559,7 @@ func (w *ioWorker) executeCOW(op uint8, flags uint32, offset int64, length int, 
 	}
 
 	// Read: check dirty state
-	allDirty, allClean := w.cowBackend.IsRangeDirty(offset, int64(length))
+	allDirty, allClean := w.cowBackend.ClassifyRange(offset, int64(length))
 
 	if allDirty {
 		// All dirty: zero-copy from overlay
@@ -630,7 +630,7 @@ func (w *ioWorker) cowReadBase(_ uint32, offset int64, length int, tag uint16) i
 	buf := w.scratchBuf[:length]
 
 	// Read from base (decompressed/in-memory data)
-	n, err := w.cowBackend.ReadCleanAt(buf, offset)
+	n, err := w.cowBackend.ReadBaseAt(buf, offset)
 	if err != nil {
 		log.Printf("Queue %d Tag %d: COW base read failed: %v", w.qid, tag, err)
 		return IOResultEIO
