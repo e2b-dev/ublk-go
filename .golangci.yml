@@ -59,7 +59,7 @@ linters:
       - path: "_test\\.go$"
         linters: [errcheck]
       - path: "example/"
-        linters: [errcheck]
+        linters: [errcheck, unparam, gocritic]
 
   settings:
     forbidigo:
