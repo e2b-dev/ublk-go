@@ -1,473 +1,253 @@
 package ublk
 
 import (
-	"errors"
 	"fmt"
-	"math/bits"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-var (
-	ErrDeviceNotStarted     = errors.New("device not started")
-	ErrDeviceAlreadyStarted = errors.New("device already started")
-	ErrInvalidParameters    = errors.New("invalid parameters")
-	ErrCharDevNotOpen       = errors.New("char device not opened")
-	ErrInvalidRequest       = errors.New("invalid request")
-
-	controlDevicePath = "/dev/ublk-control" // overridable for tests
-)
-
+// Device represents a ublk block device.
 type Device struct {
-	devID     int
-	controlFD *os.File
-
-	mu        sync.RWMutex
-	charDevFD *os.File
-	params    UblkParams
-	info      UblksrvCtrlDevInfo
-	added     bool
-	started   bool
-	stopped   bool
-
-	maxIOBufBytes uint32
-	backend       Backend
-	readAt        func([]byte, int64) (int, error)
-	writeAt       func([]byte, int64) (int, error)
-
-	flags         uint64
-	cow           bool
-	ioctlEncoding bool
-
-	workers []*ioWorker
-	wg      sync.WaitGroup
-	stopCh  chan struct{}
+	id        int
+	ctrlFD    int
+	charFD    int
+	ctrlRing  *ring
+	info      devInfo
+	backend   Backend
+	useIoctl  bool
+	workers   []*worker
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
-type DeviceOption func(*Device)
-
-func WithZeroCopy() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_SUPPORT_ZERO_COPY
-	}
-}
-
-func WithAutoBufReg() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_AUTO_BUF_REG | UBLK_F_SUPPORT_ZERO_COPY
-	}
-}
-
-func WithUserCopy() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_USER_COPY
-	}
-}
-
-func WithMaxIOBufBytes(size uint32) DeviceOption {
-	return func(d *Device) {
-		d.maxIOBufBytes = size
-	}
-}
-
-func WithCOW() DeviceOption {
-	return func(d *Device) {
-		d.cow = true
-	}
-}
-
-func WithUnprivileged() DeviceOption {
-	return func(d *Device) {
-		d.flags |= UBLK_F_UNPRIVILEGED_DEV | UBLK_F_USER_COPY
-	}
-}
-
-func NewDeviceWithBackend(backend Backend, opts ...DeviceOption) (*Device, error) {
-	controlFD, err := os.OpenFile(controlDevicePath, os.O_RDWR, 0)
+func openDevice(backend Backend) (*Device, error) {
+	fd, err := unix.Open("/dev/ublk-control", unix.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open control device: %w", err)
+		return nil, fmt.Errorf("open /dev/ublk-control: %w", err)
 	}
 
-	d := &Device{
-		devID:     -1,
-		controlFD: controlFD,
-		backend:   backend,
-		readAt:    backend.ReadAt,
-		writeAt:   backend.WriteAt,
-		flags:     UBLK_F_CMD_IOCTL_ENCODE,
-		stopCh:    make(chan struct{}),
+	ctrlRing, err := newRing(4)
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("create control ring: %w", err)
 	}
 
-	for _, opt := range opts {
-		opt(d)
-	}
-
-	return d, nil
+	return &Device{
+		id:       -1,
+		ctrlFD:   fd,
+		charFD:   -1,
+		ctrlRing: ctrlRing,
+		backend:  backend,
+	}, nil
 }
 
-func (d *Device) Add(nrHWQueues, queueDepth uint16) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.started {
-		return ErrDeviceAlreadyStarted
-	}
-	if d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 && d.flags&UBLK_F_USER_COPY != 0 {
-		return errors.New("ZeroCopy cannot be used with UserCopy")
-	}
-	if d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 {
-		if d.backend == nil {
-			return errors.New("ZeroCopy requires a backend that implements FixedFileBackend")
-		}
-		if _, ok := d.backend.(FixedFileBackend); !ok {
-			return errors.New("ZeroCopy requires a backend that implements FixedFileBackend")
-		}
+func (d *Device) addDev(queues, depth uint16, maxIOBuf uint32) error {
+	info := devInfo{
+		NrHWQueues:    queues,
+		QueueDepth:    depth,
+		MaxIOBufBytes: maxIOBuf,
+		DevID:         ^uint32(0), // kernel 6.17+ requires info.dev_id == header.dev_id
+		Flags:         flagCmdIoctlEncode,
 	}
 
-	maxIOBufBytes := d.maxIOBufBytes
-	if maxIOBufBytes == 0 {
-		maxIOBufBytes = 512 * 1024
-	}
-
-	info := UblksrvCtrlDevInfo{
-		NrHWQueues:    nrHWQueues,
-		QueueDepth:    queueDepth,
-		MaxIOBufBytes: maxIOBufBytes,
-		Flags:         d.flags | UBLK_F_CMD_IOCTL_ENCODE,
-	}
-
-	cmd := UblksrvCtrlCmd{
-		DevID:   ^uint32(0), // -1 = allocate new
+	cmd := ctrlCmd{
+		DevID:   ^uint32(0),
 		QueueID: ^uint16(0),
 		Addr:    uint64(uintptr(unsafe.Pointer(&info))),
-		Len:     uint16(SizeOfCtrlDevInfo),
+		Len:     uint16(sizeofDevInfo),
 	}
 
-	fmt.Printf("[DEBUG] Before ADD_DEV: info.DevID=%d, cmd.DevID=%d\n", info.DevID, cmd.DevID)
-	
-	err := d.ctrlCommand(uint32(UBLK_U_CMD_ADD_DEV), &cmd)
+	err := d.ctrlCommand(uCmdAddDev, &cmd)
 	if err != nil {
-		info.Flags = d.flags
+		info.Flags = 0
 		cmd.Addr = uint64(uintptr(unsafe.Pointer(&info)))
-		err = d.ctrlCommand(UBLK_CMD_ADD_DEV, &cmd)
-		if err != nil {
-			return fmt.Errorf("failed to add device: %w", err)
+		if err2 := d.ctrlCommand(cmdAddDev, &cmd); err2 != nil {
+			return fmt.Errorf("ADD_DEV failed: ioctl-encoded: %w; legacy: %w", err, err2)
 		}
-		d.ioctlEncoding = false
+		d.useIoctl = false
 	} else {
-		d.flags |= UBLK_F_CMD_IOCTL_ENCODE
-		d.ioctlEncoding = true
+		d.useIoctl = true
 	}
 
-	fmt.Printf("[DEBUG] After ADD_DEV: info.DevID=%d, info.State=%d\n", info.DevID, info.State)
-	
 	d.info = info
-	d.devID = int(info.DevID)
-	d.added = true
-
-	fmt.Printf("[DEBUG] ADD_DEV succeeded: devID=%d, ioctlEncoding=%v, flags=0x%x\n", d.devID, d.ioctlEncoding, d.flags)
-
-	return d.openCharDevice()
-}
-
-func (d *Device) Flags() uint64       { return d.flags }
-func (d *Device) HasZeroCopy() bool   { return d.flags&UBLK_F_SUPPORT_ZERO_COPY != 0 }
-func (d *Device) HasAutoBufReg() bool { return d.flags&UBLK_F_AUTO_BUF_REG != 0 }
-func (d *Device) HasUserCopy() bool   { return d.flags&UBLK_F_USER_COPY != 0 }
-
-func (d *Device) openCharDevice() error {
-	charDevPath := fmt.Sprintf("/dev/ublkc%d", d.devID)
-	var fd *os.File
-	var err error
-	for range 50 { // wait up to 500ms for udev
-		fd, err = os.OpenFile(charDevPath, os.O_RDWR, 0)
-		if err == nil {
-			break
-		}
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to open char device %s: %w", charDevPath, err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		return fmt.Errorf("char device %s not created by udev: %w", charDevPath, err)
-	}
-	d.charDevFD = fd
+	d.id = int(info.DevID)
 	return nil
 }
 
-func (d *Device) SetParams(blockSize, size uint64, maxSectors uint32, discardSectors, discardSegs uint32) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (d *Device) openCharDev() error {
+	path := fmt.Sprintf("/dev/ublkc%d", d.id)
+	var fd int
+	var err error
 
-	if d.started {
-		return ErrDeviceAlreadyStarted
-	}
-	if blockSize == 0 || blockSize&(blockSize-1) != 0 {
-		return ErrInvalidParameters
-	}
-	if size == 0 || size%blockSize != 0 {
-		return ErrInvalidParameters
-	}
-	if maxSectors == 0 {
-		return ErrInvalidParameters
-	}
-
-	params := UblkParams{}
-	blockShift := uint8(bits.TrailingZeros64(blockSize))
-	params.Len = uint32(unsafe.Sizeof(params))
-	params.Types = UBLK_PARAM_TYPE_BASIC
-	params.Basic.LogicalBSShift = blockShift
-	params.Basic.PhysicalBSShift = blockShift
-	params.Basic.IOOptShift = blockShift
-	params.Basic.IOMinShift = blockShift
-	params.Basic.MaxSectors = maxSectors
-	params.Basic.DevSectors = size / blockSize
-
-	if discardSectors > 0 {
-		params.Types |= UBLK_PARAM_TYPE_DISCARD
-		params.Discard.DiscardAlignment = uint32(blockSize)
-		params.Discard.DiscardGranularity = uint32(blockSize)
-		params.Discard.MaxDiscardSectors = discardSectors
-		params.Discard.MaxWriteZeroesSectors = discardSectors
-		if discardSegs == 0 {
-			discardSegs = 1
+	for range 50 {
+		fd, err = unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC, 0)
+		if err == nil {
+			d.charFD = fd
+			return nil
 		}
-		params.Discard.MaxDiscardSegments = uint16(discardSegs)
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("open %s: %w", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("char device %s not created: %w", path, err)
+}
+
+func (d *Device) setParams(size uint64, blockSize uint32, maxSectors uint32) error {
+	blockShift := trailingZeros32(blockSize)
+
+	params := ublkParams{
+		Len:   uint32(unsafe.Sizeof(ublkParams{})),
+		Types: paramTypeBasic,
+		Basic: paramBasic{
+			LogicalBSShift:  blockShift,
+			PhysicalBSShift: blockShift,
+			IOOptShift:      blockShift,
+			IOMinShift:      blockShift,
+			MaxSectors:      maxSectors,
+			DevSectors:      size / 512,
+		},
 	}
 
-	cmd := UblksrvCtrlCmd{
-		DevID:   uint32(d.devID),
-		QueueID: ^uint16(0), // -1 for non-queue commands
+	cmd := ctrlCmd{
+		DevID:   uint32(d.id),
+		QueueID: ^uint16(0),
 		Addr:    uint64(uintptr(unsafe.Pointer(&params))),
 		Len:     uint16(params.Len),
 	}
 
-	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_SET_PARAMS), &cmd); err != nil {
-		return fmt.Errorf("failed to set params: %w (requires CAP_SYS_ADMIN)", err)
-	}
-
-	d.params = params
-	return nil
+	return d.ctrlCommand(d.ctrlOp(uCmdSetParams, cmdSetParams), &cmd)
 }
 
-func (d *Device) Start() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.started {
-		return ErrDeviceAlreadyStarted
-	}
-	if d.charDevFD == nil {
-		return ErrCharDevNotOpen
-	}
-
-	cmd := UblksrvCtrlCmd{
-		DevID:   uint32(d.devID),
-		QueueID: ^uint16(0), // -1 for non-queue commands
-	}
-
-	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_START_DEV), &cmd); err != nil {
-		return fmt.Errorf("failed to start device: %w", err)
-	}
-
-	d.started = true
-	if err := d.startWorkers(); err != nil {
-		stopErr := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_STOP_DEV), &cmd)
-		d.started = false
-		if stopErr != nil {
-			return errors.Join(err, fmt.Errorf("failed to stop device after worker init error: %w", stopErr))
-		}
-		return err
-	}
-	return nil
-}
-
-func (d *Device) startWorkers() error {
-	d.workers = make([]*ioWorker, d.info.NrHWQueues)
-	for i := range int(d.info.NrHWQueues) {
-		worker := newIOWorker(d, uint16(i), d.info.QueueDepth)
-		if err := worker.Init(); err != nil {
-			for j := range i {
-				if d.workers[j] != nil {
-					d.workers[j].Close()
-				}
-			}
-			return fmt.Errorf("worker %d init failed: %w", i, err)
-		}
-		d.workers[i] = worker
-	}
-	for _, worker := range d.workers {
-		d.wg.Add(1)
-		go worker.Loop()
-	}
-
-	return nil
-}
-
-func (d *Device) Stop() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.stopLocked()
-}
-
-func (d *Device) stopLocked() error { // caller must hold d.mu
-	if !d.started || d.stopped {
-		return nil
-	}
-
-	cmd := UblksrvCtrlCmd{
-		DevID:   uint32(d.devID),
+func (d *Device) startDev() error {
+	cmd := ctrlCmd{
+		DevID:   uint32(d.id),
 		QueueID: ^uint16(0),
 	}
-	var stopErr error
-	if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_STOP_DEV), &cmd); err != nil {
-		stopErr = fmt.Errorf("UBLK_U_CMD_STOP_DEV failed: %w", err)
-	}
-
-	if !d.stopped {
-		close(d.stopCh)
-		d.stopped = true
-	}
-
-	d.wg.Wait()
-
-	d.stopCh = make(chan struct{})
-	d.stopped = false
-	d.workers = nil
-	d.started = false
-
-	return stopErr
+	cmd.Data[0] = uint64(os.Getpid())
+	return d.ctrlCommand(d.ctrlOp(uCmdStartDev, cmdStartDev), &cmd)
 }
 
-func (d *Device) Delete() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (d *Device) stopDev() error {
+	cmd := ctrlCmd{
+		DevID:   uint32(d.id),
+		QueueID: ^uint16(0),
+	}
+	return d.ctrlCommand(d.ctrlOp(uCmdStopDev, cmdStopDev), &cmd)
+}
 
-	if d.started {
-		_ = d.stopLocked()
+func (d *Device) delDev() error {
+	cmd := ctrlCmd{
+		DevID:   uint32(d.id),
+		QueueID: ^uint16(0),
+	}
+	return d.ctrlCommand(d.ctrlOp(uCmdDelDev, cmdDelDev), &cmd)
+}
+
+// ctrlCommand submits a control command via io_uring passthrough.
+func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
+	sqe := d.ctrlRing.getSQE()
+	if sqe == nil {
+		return fmt.Errorf("control ring SQ full")
 	}
 
-	if d.charDevFD != nil {
-		_ = d.charDevFD.Close()
-		d.charDevFD = nil
+	sqe.Opcode = opUringCmd
+	sqe.Fd = int32(d.ctrlFD)
+	sqe.Off = uint64(cmdOp)
+
+	// The kernel reads the ctrl command from sqe->cmd, not sqe->addr.
+	src := (*[unsafe.Sizeof(ctrlCmd{})]byte)(unsafe.Pointer(cmd))
+	copy(sqe.Cmd[:], src[:])
+
+	if _, err := d.ctrlRing.submit(); err != nil {
+		return err
 	}
 
-	if d.added && d.devID >= 0 {
-		cmd := UblksrvCtrlCmd{
-			DevID:   uint32(d.devID),
-			QueueID: ^uint16(0),
-		}
-		if err := d.ctrlCommand(d.cmdOpFor(UBLK_U_CMD_DEL_DEV), &cmd); err != nil {
-			return fmt.Errorf("failed to delete device: %w", err)
-		}
-		d.added = false
-		d.devID = -1
+	cqe, err := d.ctrlRing.waitCQE()
+	if err != nil {
+		return err
 	}
 
-	if d.controlFD != nil {
-		_ = d.controlFD.Close()
-		d.controlFD = nil
-	}
+	res := cqe.Res
+	d.ctrlRing.seenCQE()
 
+	if res < 0 {
+		return fmt.Errorf("ublk control cmd 0x%x: %w", cmdOp, syscall.Errno(-res))
+	}
 	return nil
 }
 
+func (d *Device) ctrlOp(ioctlCmd, legacyCmd uint32) uint32 {
+	if d.useIoctl {
+		return ioctlCmd
+	}
+	return legacyCmd
+}
+
+// BlockDevicePath returns the path to the block device (e.g., /dev/ublkb0).
 func (d *Device) BlockDevicePath() string {
-	if d.devID < 0 {
+	if d.id < 0 {
 		return ""
 	}
-	return fmt.Sprintf("/dev/ublkb%d", d.devID)
+	return fmt.Sprintf("/dev/ublkb%d", d.id)
 }
 
+// DeviceID returns the ublk device ID.
 func (d *Device) DeviceID() int {
-	return d.devID
+	return d.id
 }
 
-func (d *Device) blockSize() uint64 {
-	shift := d.params.Basic.LogicalBSShift
-	if shift == 0 {
-		return 512
-	}
-	return 1 << shift
+// Close stops and removes the ublk device, releasing all resources.
+func (d *Device) Close() (retErr error) {
+	d.closeOnce.Do(func() {
+		retErr = d.shutdown()
+	})
+	return
 }
 
-// Sync opens the block device, calls fsync(), triggering FLUSH to backend.
-func (d *Device) Sync() error {
-	d.mu.RLock()
-	if !d.started {
-		d.mu.RUnlock()
-		return ErrDeviceNotStarted
-	}
-	devPath := d.BlockDevicePath()
-	d.mu.RUnlock()
+func (d *Device) shutdown() error {
+	// Stop the device; this causes the kernel to complete pending FETCH_REQ
+	// with -ENODEV, which makes the workers exit.
+	_ = d.stopDev()
 
-	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("failed to open block device for sync: %w", err)
-	}
-	defer func() { _ = unix.Close(fd) }()
+	// Wait for all workers to finish.
+	d.wg.Wait()
 
-	if err := unix.Fsync(fd); err != nil {
-		return fmt.Errorf("fsync failed: %w", err)
+	if d.charFD >= 0 {
+		_ = unix.Close(d.charFD)
+		d.charFD = -1
 	}
 
-	return nil
+	var err error
+	if d.id >= 0 {
+		err = d.delDev()
+	}
+
+	if d.ctrlRing != nil {
+		_ = d.ctrlRing.close()
+		d.ctrlRing = nil
+	}
+	if d.ctrlFD >= 0 {
+		_ = unix.Close(d.ctrlFD)
+		d.ctrlFD = -1
+	}
+
+	return err
 }
 
-const ioctlBLKFLSBUF = 0x1261
-
-// FlushBuffers clears kernel page cache for this device (BLKFLSBUF ioctl).
-// Unlike Sync(), this does NOT send FLUSH to the backend.
-func (d *Device) FlushBuffers() error {
-	d.mu.RLock()
-	if !d.started {
-		d.mu.RUnlock()
-		return ErrDeviceNotStarted
+func trailingZeros32(v uint32) uint8 {
+	if v == 0 {
+		return 0
 	}
-	devPath := d.BlockDevicePath()
-	d.mu.RUnlock()
-
-	fd, err := unix.Open(devPath, unix.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("failed to open block device for buffer flush: %w", err)
+	var n uint8
+	for v&1 == 0 {
+		n++
+		v >>= 1
 	}
-	defer func() { _ = unix.Close(fd) }()
-
-	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), ioctlBLKFLSBUF, 0); errno != 0 {
-		return fmt.Errorf("BLKFLSBUF ioctl failed: %w", errno)
-	}
-
-	return nil
-}
-
-func (d *Device) ctrlCommand(cmdOp uint32, cmd *UblksrvCtrlCmd) error {
-	if d.controlFD == nil {
-		return errors.New("control device closed")
-	}
-	return ctrlCmd(d.controlFD, cmdOp, cmd)
-}
-
-func (d *Device) cmdOpFor(ioctlEncodedCmd uintptr) uint32 {
-	if d.ioctlEncoding {
-		return uint32(ioctlEncodedCmd)
-	}
-	switch ioctlEncodedCmd {
-	case UBLK_U_CMD_SET_PARAMS:
-		return UBLK_CMD_SET_PARAMS
-	case UBLK_U_CMD_GET_PARAMS:
-		return UBLK_CMD_GET_PARAMS
-	case UBLK_U_CMD_START_DEV:
-		return UBLK_CMD_START_DEV
-	case UBLK_U_CMD_STOP_DEV:
-		return UBLK_CMD_STOP_DEV
-	case UBLK_U_CMD_DEL_DEV:
-		return UBLK_CMD_DEL_DEV
-	default:
-		return uint32(ioctlEncodedCmd)
-	}
+	return n
 }

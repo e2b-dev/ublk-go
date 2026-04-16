@@ -2,53 +2,102 @@ package ublk
 
 import "unsafe"
 
+// ublk driver UAPI constants from include/uapi/linux/ublk_cmd.h
+
 const (
-	UBLK_IO_OP_READ         = 0
-	UBLK_IO_OP_WRITE        = 1
-	UBLK_IO_OP_FLUSH        = 2
-	UBLK_IO_OP_DISCARD      = 3
-	UBLK_IO_OP_WRITE_ZEROES = 5
+	opRead        = 0
+	opWrite       = 1
+	opFlush       = 2
+	opDiscard     = 3
+	opWriteZeroes = 5
 
-	UBLK_IO_F_FUA = 1 << 13
+	flagCmdIoctlEncode = 1 << 6
 
-	UBLK_F_SUPPORT_ZERO_COPY     = 1 << 0
-	UBLK_F_UNPRIVILEGED_DEV      = 1 << 4
-	UBLK_F_CMD_IOCTL_ENCODE      = 1 << 6
-	UBLK_F_USER_COPY             = 1 << 7
-	UBLK_F_USER_RECOVERY         = 1 << 8
-	UBLK_F_USER_RECOVERY_REISSUE = 1 << 9
-	UBLK_F_AUTO_BUF_REG          = 1 << 11
+	maxQueueDepth = 4096
 
-	UBLK_MAX_QUEUE_DEPTH  = 4096
-	UBLK_IO_BUF_BITS      = 25
-	UBLK_TAG_BITS         = 16
-	UBLK_QID_BITS         = 12
-	UBLK_TAG_OFF          = UBLK_IO_BUF_BITS
-	UBLK_QID_OFF          = UBLK_TAG_OFF + UBLK_TAG_BITS
-	UBLKSRV_IO_BUF_OFFSET = 0x80000000
-
-	UBLK_PARAM_TYPE_BASIC   = 1 << 0
-	UBLK_PARAM_TYPE_DISCARD = 1 << 1
+	paramTypeBasic = 1 << 0
 )
 
-func ublkUserCopyPos(qid, tag uint16) int64 {
-	return int64(UBLKSRV_IO_BUF_OFFSET) + (int64(qid)<<UBLK_QID_OFF | int64(tag)<<UBLK_TAG_OFF)
+// Legacy control command numbers.
+const (
+	cmdAddDev    uint32 = 0x04
+	cmdDelDev    uint32 = 0x05
+	cmdStartDev  uint32 = 0x06
+	cmdStopDev   uint32 = 0x07
+	cmdSetParams uint32 = 0x08
+)
+
+// ioctl-encoded control commands: _IOWR('u', nr, sizeof(ublksrv_ctrl_cmd)).
+const (
+	uCmdAddDev    uint32 = 0xC0207504
+	uCmdDelDev    uint32 = 0xC0207505
+	uCmdStartDev  uint32 = 0xC0207506
+	uCmdStopDev   uint32 = 0xC0207507
+	uCmdSetParams uint32 = 0xC0207508
+)
+
+// ioctl-encoded IO commands: _IOWR('u', nr, sizeof(ublksrv_io_cmd)).
+const (
+	uIOFetchReq          uint32 = 0xC0107520
+	uIOCommitAndFetchReq uint32 = 0xC0107521
+)
+
+// ublksrv_ctrl_cmd: shipped via sqe->cmd to /dev/ublk-control. 32 bytes.
+type ctrlCmd struct {
+	DevID      uint32
+	QueueID    uint16
+	Len        uint16
+	Addr       uint64
+	Data       [1]uint64
+	DevPathLen uint16
+	Pad        uint16
+	Reserved   uint32
 }
 
-type UblkParams struct {
+// ublksrv_ctrl_dev_info: describes a ublk device. 64 bytes.
+type devInfo struct {
+	NrHWQueues    uint16
+	QueueDepth    uint16
+	State         uint16
+	Pad0          uint16
+	MaxIOBufBytes uint32
+	DevID         uint32
+	UblksrvPID    int32
+	Pad1          uint32
+	Flags         uint64
+	UblksrvFlags  uint64
+	OwnerUID      uint32
+	OwnerGID      uint32
+	Reserved1     uint64
+	Reserved2     uint64
+}
+
+// ublksrv_io_cmd: shipped via sqe->cmd to /dev/ublkcN. 16 bytes.
+type ioCmd struct {
+	QID    uint16
+	Tag    uint16
+	Result int32
+	Addr   uint64
+}
+
+// ublksrv_io_desc: read from the mmap'd descriptor area. 24 bytes.
+type ioDesc struct {
+	OpFlags     uint32
+	NrSectors   uint32
+	StartSector uint64
+	Addr        uint64
+}
+
+type ublkParams struct {
 	Len     uint32
 	Types   uint32
-	Basic   UblkParamBasic
-	Discard UblkParamDiscard
-	Devt    UblkParamDevt
-	Zoned   UblkParamZoned
-
-	DMAAlign UblkParamDMAAlign
-
-	Segment UblkParamSegment
+	Basic   paramBasic
+	Discard paramDiscard
+	Devt    paramDevt
+	Zoned   paramZoned
 }
 
-type UblkParamBasic struct {
+type paramBasic struct {
 	Attrs            uint32
 	LogicalBSShift   uint8
 	PhysicalBSShift  uint8
@@ -60,7 +109,7 @@ type UblkParamBasic struct {
 	VirtBoundaryMask uint64
 }
 
-type UblkParamDiscard struct {
+type paramDiscard struct {
 	DiscardAlignment      uint32
 	DiscardGranularity    uint32
 	MaxDiscardSectors     uint32
@@ -69,46 +118,23 @@ type UblkParamDiscard struct {
 	Reserved0             uint16
 }
 
-type UblkParamDevt struct {
+type paramDevt struct {
 	CharMajor uint32
 	CharMinor uint32
 	DiskMajor uint32
 	DiskMinor uint32
 }
 
-type UblkParamZoned struct {
+type paramZoned struct {
 	MaxOpenZones         uint32
 	MaxActiveZones       uint32
 	MaxZoneAppendSectors uint32
 	Reserved             [20]uint8
 }
 
-type UblkParamDMAAlign struct {
-	Alignment uint32
-	Pad       [4]uint8
-}
-
-type UblkParamSegment struct {
-	SegBoundaryMask uint64
-	MaxSegmentSize  uint32
-	MaxSegments     uint16
-	Pad             [2]uint8
-}
-
-type UblkDevInfo = UblksrvCtrlDevInfo
-
-type UblksrvIODesc struct {
-	OpFlags     uint32 // op: bits 0-7, flags: bits 8-31
-	NrSectors   uint32
-	StartSector uint64
-	Addr        uint64
-}
-
-const SizeOfUblksrvIODesc = unsafe.Sizeof(UblksrvIODesc{})
-
-type UblkQueueAffinity struct {
-	QID      uint16
-	Pad      [3]uint16
-	SetSize  uint32
-	Reserved [12]uint64
-}
+var (
+	sizeofDevInfo = unsafe.Sizeof(devInfo{})
+	sizeofIODesc  = unsafe.Sizeof(ioDesc{})
+	sizeofCtrlCmd = unsafe.Sizeof(ctrlCmd{})
+	sizeofIOCmd   = unsafe.Sizeof(ioCmd{})
+)
