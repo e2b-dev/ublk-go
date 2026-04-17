@@ -20,9 +20,9 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 
 ## Requirements
 
-- Linux 6.0+
+- Linux 6.0+ (tested on 6.17)
 - `CAP_SYS_ADMIN` (root)
-- `modprobe ublk_drv`
+- `ublk_drv` kernel module loaded (`modprobe ublk_drv`)
 
 ## Quick start
 
@@ -56,11 +56,9 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
     return copy(m.data[off:off+int64(len(p))], p), nil
 }
 
-func (m *memBackend) Flush() error { return nil }
-
 func main() {
     const size = 256 * 1024 * 1024
-    dev, err := ublk.New(&memBackend{data: make([]byte, size)}, ublk.Config{Size: size})
+    dev, err := ublk.New(&memBackend{data: make([]byte, size)}, size)
     if err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
@@ -75,31 +73,47 @@ func main() {
 }
 ```
 
-## Architecture
+Run with `sudo go run ./example`. The block device appears at `/dev/ublkbN` and can be used like any other block device (`mkfs`, `mount`, `dd`, etc.).
 
-- **Control plane**: Commands to `/dev/ublk-control` via io_uring passthrough (`URING_CMD`) manage device lifecycle: `ADD_DEV` → `SET_PARAMS` → `START_DEV` → `STOP_DEV` → `DEL_DEV`.
-- **Data plane**: One goroutine per queue, each with its own io_uring, processing `FETCH_REQ` / `COMMIT_AND_FETCH_REQ` commands on `/dev/ublkcN`. IO descriptors are memory-mapped from the char device.
-- **No CGO**: All syscalls are made directly via Go's `syscall` package and `golang.org/x/sys/unix`.
-
-## Backend interface
+## API
 
 ```go
 type Backend interface {
     ReadAt(p []byte, off int64) (n int, err error)
     WriteAt(p []byte, off int64) (n int, err error)
 }
+
+func New(backend Backend, size uint64) (*Device, error)
+func (*Device) BlockDevicePath() string
+func (*Device) Close() error
 ```
 
-Optionally implement `Flusher`, `Discarder`, or `WriteZeroer` for additional block operations.
+`size` must be a positive multiple of 512. The block device uses 512-byte logical blocks, 128KB max IO, and a single queue with depth 128.
 
-## Config
+## Architecture
 
-| Field      | Default | Description                          |
-|------------|---------|--------------------------------------|
-| Size       | —       | Device size in bytes (required)      |
-| BlockSize  | 512     | Logical block size (power of 2)      |
-| Queues     | 1       | Number of IO queues                  |
-| QueueDepth | 128     | Per-queue IO depth (power of 2)      |
+- **Control plane**: Commands to `/dev/ublk-control` via io_uring passthrough (`URING_CMD`) manage device lifecycle: ADD_DEV → SET_PARAMS → START_DEV → STOP_DEV → DEL_DEV.
+- **Data plane**: One worker goroutine pinned to an OS thread (required by the ublk protocol), processing FETCH_REQ / COMMIT_AND_FETCH_REQ commands on its own io_uring on `/dev/ublkcN`. IO descriptors are memory-mapped from the char device.
+- **No CGO**: All syscalls are made directly via `golang.org/x/sys/unix`.
+- **Shutdown**: `Close()` triggers `ublk_ch_release` in the kernel, cancels the worker via eventfd+epoll, sends STOP+DEL, releases all fds.
+
+## Packages
+
+- `github.com/e2b-dev/ublk-go/ublk` — main library (`New`, `Device`, `Backend`)
+- `github.com/e2b-dev/ublk-go/ublk/uring` — standalone io_uring wrapper used by the library
+
+## Development
+
+```bash
+make test              # unit tests (no root needed)
+make test-integration  # full test suite (requires root + ublk_drv)
+make lint              # gofmt check, golangci-lint, go mod verify
+make fmt               # format code and tidy go.mod
+```
+
+## Future work
+
+See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned devices, etc.).
 
 ## References
 
