@@ -74,10 +74,8 @@ func TestWorkerHandleIOZeroLength(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name     string
-		op       uint32
-		readOps  int
-		writeOps int
+		name string
+		op   uint32
 	}{
 		{name: "read", op: opRead},
 		{name: "write", op: opWrite},
