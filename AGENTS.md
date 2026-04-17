@@ -10,10 +10,18 @@ history. Keep it factual. Read this before diving in.
 make probe           # sudo needed; per-step timeouts; exits non-zero on hang
 ```
 
-The probe (`example/probe/main.go`) exercises: device creation → `mkfs.ext4`
-→ mount → scripted write + `sync -f` → drop page cache + readback →
-concurrent writers → unmount → remount (journal replay) → unmount → close
-→ verify `/dev/ublkbN` is gone.
+The probe (`example/probe/main.go`) exercises both sides of the stack:
+
+- **Device-level** (direct I/O, bypasses page cache): `BLKGETSIZE64` size
+  check; pre-mkfs zero-read; random-block write/read roundtrip that also
+  verifies the backend's raw storage holds the same bytes at the same
+  offset (proves kernel ↔ userspace offset mapping is 1:1).
+- **Filesystem-level**: `mkfs.ext4` → mount → scripted write + `sync -f`
+  (asserts backend writes > 0) → `fsync` alone (also asserts backend
+  writes > 0) → drop caches + readback (asserts backend reads > 0) →
+  scan the backend for the magic pattern (proves filesystem reads
+  ultimately come from our in-memory storage) → concurrent writers →
+  remount (journal replay) → umount → close → verify `/dev/ublkbN` gone.
 
 If a step hangs beyond the timeout the probe **panics**, which prints a
 full goroutine dump from the Go runtime — this is the single most useful
