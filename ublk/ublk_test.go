@@ -151,6 +151,48 @@ func canRunIntegration(t *testing.T) {
 	}
 }
 
+func init() {
+	// Clean up stale ublk devices left behind by previous crashed test runs.
+	if os.Getuid() != 0 {
+		return
+	}
+	ctrlFD, err := unix.Open("/dev/ublk-control", unix.O_RDWR, 0)
+	if err != nil {
+		return
+	}
+	r, err := newCtrlRing(4)
+	if err != nil {
+		unix.Close(ctrlFD)
+		return
+	}
+	defer r.close()
+	defer unix.Close(ctrlFD)
+
+	for id := uint32(0); id < 64; id++ {
+		path := fmt.Sprintf("/dev/ublkc%d", id)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		for _, op := range []uint32{uCmdStopDev, uCmdDelDev} {
+			sqe := r.getSQE128()
+			if sqe == nil {
+				break
+			}
+			cmd := ctrlCmd{DevID: id, QueueID: ^uint16(0)}
+			sqe.Opcode = opUringCmd
+			sqe.Fd = int32(ctrlFD)
+			sqe.Off = uint64(op)
+			src := (*[32]byte)(unsafe.Pointer(&cmd))
+			copy(sqe.Cmd[:], src[:])
+			r.submit()
+			if c, err := r.waitCQE(); err == nil {
+				r.seenCQE()
+				_ = c
+			}
+		}
+	}
+}
+
 // memBackend is a concurrency-safe in-memory block device.
 type memBackend struct {
 	mu      sync.RWMutex

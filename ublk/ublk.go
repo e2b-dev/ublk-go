@@ -133,28 +133,23 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		dev.workers[i] = w
 	}
 
-	// Phase 2: Launch worker goroutines. Each goroutine pins its OS thread,
-	// submits the FETCH_REQ via io_uring_enter, then signals ready.
-	// The FETCH_REQ must be submitted from the worker threads because the
-	// kernel's START_DEV handler blocks until all FETCH_REQ are processed,
-	// and that processing must happen on separate threads concurrently.
-	readyChs := make([]chan error, cfg.Queues)
+	// Phase 2: Launch worker goroutines. Each goroutine pins to an OS thread
+	// and signals ready immediately. The actual FETCH_REQ submission happens
+	// concurrently with START_DEV (matching the ublksrv reference).
+	readyChs := make([]chan struct{}, cfg.Queues)
 	for i, w := range dev.workers {
-		readyChs[i] = make(chan error, 1)
+		readyChs[i] = make(chan struct{})
 		dev.wg.Add(1)
 		go w.run(readyChs[i])
 	}
 
-	// Wait for all workers to have submitted their FETCH_REQ.
-	for i, ch := range readyChs {
-		if err := <-ch; err != nil {
-			cleanup()
-			return nil, fmt.Errorf("queue %d FETCH_REQ: %w", i, err)
-		}
+	// Wait for all workers to be running on their OS threads.
+	for _, ch := range readyChs {
+		<-ch
 	}
 
-	// Phase 3: START_DEV. The kernel blocks here until it has processed all
-	// FETCH_REQ (which the worker threads already submitted above).
+	// Phase 3: START_DEV. The kernel blocks here until all FETCH_REQ
+	// (being submitted concurrently by the worker goroutines) are processed.
 	if err := dev.startDev(); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("start device: %w", err)

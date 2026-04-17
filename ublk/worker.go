@@ -52,19 +52,24 @@ func (w *worker) init() error {
 	return nil
 }
 
-// run submits the prepared FETCH_REQ, signals ready, then enters the IO loop.
+// run signals ready, submits the prepared FETCH_REQ, then enters the IO loop.
+// Ready is signaled BEFORE submit so that START_DEV and FETCH_REQ submission
+// happen concurrently (matching the ublksrv reference implementation).
 // Must be called on its own goroutine.
-func (w *worker) run(ready chan<- error) {
+func (w *worker) run(ready chan<- struct{}) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer w.dev.wg.Done()
 	defer w.cleanup()
 
+	// Signal ready BEFORE submit — the main goroutine will send START_DEV
+	// concurrently. The kernel's START_DEV blocks until all FETCH_REQ are
+	// processed, so the ordering is handled by the kernel.
+	close(ready)
+
 	if _, err := w.ioRing.submit(); err != nil {
-		ready <- err
 		return
 	}
-	ready <- nil
 
 	for {
 		c, err := w.ioRing.waitCQE()
