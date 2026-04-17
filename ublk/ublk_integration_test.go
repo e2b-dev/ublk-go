@@ -441,7 +441,7 @@ func TestPath(t *testing.T) {
 
 	path := dev.Path()
 	if path == "" {
-		t.Fatal("BlockDevicePath is empty")
+		t.Fatal("Device.Path returned empty string")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("block device %s does not exist: %v", path, err)

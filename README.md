@@ -38,19 +38,24 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 ## Install
 
 ```bash
-go get github.com/e2b-dev/ublk-go/ublk@latest
+go get github.com/e2b-dev/ublk-go@latest
 ```
 
 Pin to a tagged release once there is one:
 
 ```bash
-go get github.com/e2b-dev/ublk-go/ublk@v0.1.0
+go get github.com/e2b-dev/ublk-go@v0.1.0
 ```
 
-Import path: `github.com/e2b-dev/ublk-go/ublk`. The only symbols you
-need from day one are `Backend`, `New`, and `(*Device).Path` /
-`(*Device).Close`. The lower-level io_uring wrapper at
-`github.com/e2b-dev/ublk-go/ublk/uring` is intentionally separate —
+In code, import the subpackage:
+
+```go
+import "github.com/e2b-dev/ublk-go/ublk"
+```
+
+The only symbols you need from day one are `Backend`, `New`, and
+`(*Device).Path` / `(*Device).Close`. The lower-level io_uring wrapper
+at `github.com/e2b-dev/ublk-go/ublk/uring` is intentionally separate —
 most users don't touch it.
 
 > [!IMPORTANT]
