@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// io_uring constants.
 const (
 	OpUringCmd = 46
 
@@ -23,6 +24,7 @@ const (
 	offSQEs   = 0x10000000
 )
 
+// SQE128 is a 128-byte submission queue entry.
 type SQE128 struct {
 	Opcode      uint8
 	Flags       uint8
@@ -39,6 +41,7 @@ type SQE128 struct {
 	Cmd         [80]byte
 }
 
+// SQE64 is a standard 64-byte submission queue entry.
 type SQE64 struct {
 	Opcode      uint8
 	Flags       uint8
@@ -55,6 +58,7 @@ type SQE64 struct {
 	Cmd         [16]byte
 }
 
+// CQE is a 16-byte completion queue entry.
 type CQE struct {
 	UserData uint64
 	Res      int32

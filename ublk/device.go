@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Device is a ublk block device.
 type Device struct {
 	id        int
 	ctrlFD    int

@@ -1,12 +1,20 @@
 version: "2"
 
+formatters:
+  enable:
+    - gofumpt
+
 linters:
   default: none
   enable:
     - errcheck
+    - gocritic
     - govet
     - ineffassign
+    - revive
     - staticcheck
+    - unconvert
+    - unparam
     - unused
 
   exclusions:
