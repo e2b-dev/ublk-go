@@ -1,0 +1,144 @@
+// End-to-end demo: create a ublk device, format it with ext4, mount it,
+// write and read a file, and print backend I/O stats at each phase.
+//
+// Requires root and the ublk_drv module:
+//
+//	sudo modprobe ublk_drv
+//	sudo go run ./example/fsdemo
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+
+	"github.com/e2b-dev/ublk-go/ublk"
+)
+
+const devSize = 64 * 1024 * 1024 // 64 MiB
+
+// loggingBackend is an in-memory Backend that counts I/O.
+type loggingBackend struct {
+	mu         sync.RWMutex
+	data       []byte
+	reads      atomic.Int64
+	writes     atomic.Int64
+	readBytes  atomic.Int64
+	writeBytes atomic.Int64
+}
+
+func (b *loggingBackend) ReadAt(p []byte, off int64) (int, error) {
+	b.reads.Add(1)
+	b.readBytes.Add(int64(len(p)))
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return copy(p, b.data[off:off+int64(len(p))]), nil
+}
+
+func (b *loggingBackend) WriteAt(p []byte, off int64) (int, error) {
+	b.writes.Add(1)
+	b.writeBytes.Add(int64(len(p)))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return copy(b.data[off:off+int64(len(p))], p), nil
+}
+
+func main() {
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	backend := &loggingBackend{data: make([]byte, devSize)}
+
+	dev, err := ublk.New(backend, devSize)
+	if err != nil {
+		return fmt.Errorf("ublk.New: %w", err)
+	}
+	defer func() {
+		log.Printf("closing ublk device")
+		if err := dev.Close(); err != nil {
+			log.Printf("close: %v", err)
+		}
+	}()
+
+	path := dev.BlockDevicePath()
+	log.Printf("created %s (%d MiB)", path, devSize/1024/1024)
+	stats(backend, "idle")
+
+	if err := shell("mkfs.ext4", "-q", "-F", path); err != nil {
+		return fmt.Errorf("mkfs.ext4: %w", err)
+	}
+	stats(backend, "after mkfs.ext4")
+
+	mountpoint, err := os.MkdirTemp("", "ublk-fsdemo-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(mountpoint)
+
+	if err := shell("mount", path, mountpoint); err != nil {
+		return fmt.Errorf("mount: %w", err)
+	}
+	defer func() {
+		if err := shell("umount", mountpoint); err != nil {
+			log.Printf("umount: %v", err)
+		}
+	}()
+	log.Printf("mounted at %s", mountpoint)
+	stats(backend, "after mount")
+
+	// Write a file through the filesystem.
+	content := bytes.Repeat([]byte("hello from ublk-backed ext4\n"), 100)
+	fpath := mountpoint + "/greeting.txt"
+	if err := os.WriteFile(fpath, content, 0o644); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	log.Printf("wrote %s (%d bytes)", fpath, len(content))
+
+	// sync forces dirty page cache to hit the backend.
+	if err := shell("sync"); err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	stats(backend, "after write + sync")
+
+	// Drop caches so the next read goes through the block device (and
+	// therefore our Backend.ReadAt), not the kernel page cache.
+	if err := os.WriteFile("/proc/sys/vm/drop_caches", []byte("3"), 0); err != nil {
+		log.Printf("drop_caches: %v (read stats may be misleading)", err)
+	}
+
+	got, err := os.ReadFile(fpath)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	if !bytes.Equal(got, content) {
+		return fmt.Errorf("read-back mismatch: want %d bytes, got %d", len(content), len(got))
+	}
+	log.Printf("read %d bytes back; content matches", len(got))
+	stats(backend, "after drop_caches + read")
+
+	return nil
+}
+
+// shell runs a command, echoing stdout/stderr to the terminal.
+func shell(name string, args ...string) error {
+	fmt.Printf(">>> %s %v\n", name, args)
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func stats(b *loggingBackend, phase string) {
+	log.Printf("[%-22s] reads=%-4d (%4d KiB)  writes=%-4d (%4d KiB)",
+		phase,
+		b.reads.Load(), b.readBytes.Load()/1024,
+		b.writes.Load(), b.writeBytes.Load()/1024)
+}

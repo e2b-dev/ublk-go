@@ -75,6 +75,8 @@ func main() {
 
 Run with `sudo go run ./example`. The block device appears at `/dev/ublkbN` and can be used like any other block device (`mkfs`, `mount`, `dd`, etc.).
 
+For an end-to-end demo that formats, mounts, writes a file, and prints backend I/O counts at each phase, run `sudo go run ./example/fsdemo`.
+
 ## API
 
 ```go
@@ -105,10 +107,12 @@ func (*Device) Close() error
 ## Development
 
 ```bash
-make test              # unit tests (no root needed)
-make test-integration  # full test suite (requires root + ublk_drv)
-make lint              # gofmt check, golangci-lint, go mod verify
+make test              # unit + integration (integration uses sudo)
+make test-unit         # unit tests only (no root needed)
+make test-integration  # integration tests only (requires root + ublk_drv)
+make lint              # gofmt check, go mod tidy check, golangci-lint, go mod verify
 make fmt               # format code and tidy go.mod
+make hooks             # install the repo's pre-commit hook (optional)
 ```
 
 ## Future work
