@@ -2,8 +2,6 @@ package ublk
 
 import "unsafe"
 
-// ublk driver UAPI constants from include/uapi/linux/ublk_cmd.h
-
 const (
 	opRead  = 0
 	opWrite = 1
@@ -15,7 +13,6 @@ const (
 	paramTypeBasic = 1 << 0
 )
 
-// Legacy control command numbers.
 const (
 	cmdAddDev    uint32 = 0x04
 	cmdDelDev    uint32 = 0x05
@@ -24,7 +21,6 @@ const (
 	cmdSetParams uint32 = 0x08
 )
 
-// ioctl-encoded control commands: _IOWR('u', nr, sizeof(ublksrv_ctrl_cmd)).
 const (
 	uCmdAddDev    uint32 = 0xC0207504
 	uCmdDelDev    uint32 = 0xC0207505
@@ -33,13 +29,11 @@ const (
 	uCmdSetParams uint32 = 0xC0207508
 )
 
-// ioctl-encoded IO commands: _IOWR('u', nr, sizeof(ublksrv_io_cmd)).
 const (
 	uIOFetchReq          uint32 = 0xC0107520
 	uIOCommitAndFetchReq uint32 = 0xC0107521
 )
 
-// ublksrv_ctrl_cmd: shipped via sqe->cmd to /dev/ublk-control. 32 bytes.
 type ctrlCmd struct {
 	DevID      uint32
 	QueueID    uint16
@@ -51,7 +45,6 @@ type ctrlCmd struct {
 	Reserved   uint32
 }
 
-// ublksrv_ctrl_dev_info: describes a ublk device. 64 bytes.
 type devInfo struct {
 	NrHWQueues    uint16
 	QueueDepth    uint16
@@ -69,7 +62,6 @@ type devInfo struct {
 	Reserved2     uint64
 }
 
-// ublksrv_io_cmd: shipped via sqe->cmd to /dev/ublkcN. 16 bytes.
 type ioCmd struct {
 	QID    uint16
 	Tag    uint16
@@ -77,7 +69,6 @@ type ioCmd struct {
 	Addr   uint64
 }
 
-// ublksrv_io_desc: read from the mmap'd descriptor area. 24 bytes.
 type ioDesc struct {
 	OpFlags     uint32
 	NrSectors   uint32

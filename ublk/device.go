@@ -12,7 +12,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Device represents a ublk block device.
 type Device struct {
 	id        int
 	ctrlFD    int
@@ -52,7 +51,7 @@ func (d *Device) addDev(queues, depth uint16, maxIOBuf uint32) error {
 		NrHWQueues:    queues,
 		QueueDepth:    depth,
 		MaxIOBufBytes: maxIOBuf,
-		DevID:         ^uint32(0), // kernel 6.17+ requires info.dev_id == header.dev_id
+		DevID:         ^uint32(0), // must match cmd.DevID (kernel 6.17+)
 		Flags:         flagCmdIoctlEncode,
 	}
 
@@ -104,7 +103,7 @@ func (d *Device) setParams(size uint64, maxSectors uint32) error {
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
 		Basic: paramBasic{
-			LogicalBSShift:  9, // 512 bytes
+			LogicalBSShift:  9,
 			PhysicalBSShift: 9,
 			IOOptShift:      9,
 			IOMinShift:      9,
@@ -133,22 +132,15 @@ func (d *Device) startDev() error {
 }
 
 func (d *Device) stopDev() error {
-	cmd := ctrlCmd{
-		DevID:   uint32(d.id),
-		QueueID: ^uint16(0),
-	}
+	cmd := ctrlCmd{DevID: uint32(d.id), QueueID: ^uint16(0)}
 	return d.ctrlCommand(d.ctrlOp(uCmdStopDev, cmdStopDev), &cmd)
 }
 
 func (d *Device) delDev() error {
-	cmd := ctrlCmd{
-		DevID:   uint32(d.id),
-		QueueID: ^uint16(0),
-	}
+	cmd := ctrlCmd{DevID: uint32(d.id), QueueID: ^uint16(0)}
 	return d.ctrlCommand(d.ctrlOp(uCmdDelDev, cmdDelDev), &cmd)
 }
 
-// ctrlCommand submits a control command via io_uring passthrough.
 func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
 	sqe := d.ctrlRing.GetSQE128()
 	if sqe == nil {
@@ -159,7 +151,7 @@ func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
 	sqe.Fd = int32(d.ctrlFD)
 	sqe.Off = uint64(cmdOp)
 
-	// The kernel reads the ctrl command from sqe->cmd, not sqe->addr.
+	// Kernel reads ctrl command from sqe->cmd (offset 48), not sqe->addr.
 	src := (*[unsafe.Sizeof(ctrlCmd{})]byte)(unsafe.Pointer(cmd))
 	copy(sqe.Cmd[:], src[:])
 
@@ -171,7 +163,6 @@ func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
 	if err != nil {
 		return err
 	}
-
 	res := cqe.Res
 	d.ctrlRing.SeenCQE()
 
@@ -205,18 +196,15 @@ func (d *Device) Close() (retErr error) {
 }
 
 func (d *Device) shutdown() error {
-	// Close the char fd first. This triggers the kernel's ublk_ch_release,
-	// which cancels all pending FETCH_REQ (generating -ENODEV CQEs on
-	// worker rings) and transitions the device to DEAD state.
+	// Closing the char fd triggers ublk_ch_release in the kernel, which
+	// cancels pending FETCH_REQ and generates -ENODEV CQEs on worker rings.
 	if d.charFD >= 0 {
 		_ = unix.Close(d.charFD)
 		d.charFD = -1
 	}
 
-	// Workers receive -ENODEV CQEs, see res < 0, and exit.
 	d.wg.Wait()
 
-	// Device is now DEAD. Send STOP (no-op if already stopped) and DEL.
 	_ = d.stopDev()
 	var err error
 	if d.id >= 0 {
@@ -234,4 +222,3 @@ func (d *Device) shutdown() error {
 
 	return err
 }
-

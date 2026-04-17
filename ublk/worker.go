@@ -29,8 +29,6 @@ func newWorker(dev *Device, qid, depth uint16, bufSize int) *worker {
 	}
 }
 
-// init creates the IO ring, mmaps descriptors, allocates buffers,
-// and prepares (but does NOT submit) the initial FETCH_REQ SQEs.
 func (w *worker) init() error {
 	var err error
 
@@ -53,10 +51,8 @@ func (w *worker) init() error {
 	return nil
 }
 
-// run submits the FETCH_REQ, signals ready, then enters the IO event loop.
-// The submit MUST happen on this goroutine's locked OS thread. We use
-// submitAndWait (IORING_ENTER_GETEVENTS) to ensure the kernel processes
-// the FETCH_REQ task work before returning.
+// run submits FETCH_REQ from a locked OS thread (required by ublk kernel
+// protocol), signals ready, then enters the IO event loop.
 func (w *worker) run(ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

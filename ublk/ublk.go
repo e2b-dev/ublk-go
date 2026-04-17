@@ -1,18 +1,15 @@
-// Package ublk implements Linux userspace block devices via the ublk driver and io_uring.
+// Package ublk provides Linux userspace block devices via the ublk driver.
 package ublk
 
 import "fmt"
 
-// Backend is the interface that block device implementations must satisfy.
-// ReadAt and WriteAt must be safe for concurrent use.
+// Backend must be safe for concurrent use.
 type Backend interface {
 	ReadAt(p []byte, off int64) (n int, err error)
 	WriteAt(p []byte, off int64) (n int, err error)
 }
 
-// New creates and starts a ublk block device of the given size (in bytes),
-// backed by the given Backend. The block device is available at
-// Device.BlockDevicePath() after this returns.
+// New creates a ublk block device. Size must be a positive multiple of 512.
 // Call Device.Close() to stop and remove the device.
 func New(backend Backend, size uint64) (*Device, error) {
 	if size == 0 || size%512 != 0 {

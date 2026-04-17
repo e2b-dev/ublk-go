@@ -15,10 +15,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ---------------------------------------------------------------------------
-// ABI correctness: struct sizes must exactly match the kernel UAPI or every
-// ioctl / mmap / io_uring command silently corrupts memory.
-// ---------------------------------------------------------------------------
 
 func TestUblkStructSizes(t *testing.T) {
 	if unsafe.Sizeof(ctrlCmd{}) != 32 {
@@ -35,9 +31,6 @@ func TestUblkStructSizes(t *testing.T) {
 	}
 }
 
-// ===========================================================================
-// Integration tests — require root and ublk_drv loaded.
-// ===========================================================================
 
 func canRunIntegration(t *testing.T) {
 	t.Helper()
@@ -50,7 +43,6 @@ func canRunIntegration(t *testing.T) {
 }
 
 
-// memBackend is a concurrency-safe in-memory block device.
 type memBackend struct {
 	mu     sync.RWMutex
 	data   []byte
@@ -82,7 +74,6 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
 	return copy(m.data[off:], p), nil
 }
 
-// snapshot returns a copy of the backend data for comparison.
 func (m *memBackend) snapshot() []byte {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -103,7 +94,6 @@ func makeDevice(t *testing.T, size uint64) (*Device, *memBackend) {
 	return dev, backend
 }
 
-// openBlkDev opens the block device path for direct IO, falling back to O_SYNC.
 func openBlkDev(t *testing.T, path string, flags int) int {
 	t.Helper()
 	fd, err := unix.Open(path, flags|unix.O_DIRECT, 0)
@@ -117,10 +107,7 @@ func openBlkDev(t *testing.T, path string, flags int) int {
 	return fd
 }
 
-// ---------------------------------------------------------------------------
-// Test: write data through the block device, then read the backend directly
 // to prove the write path works end-to-end through the kernel.
-// ---------------------------------------------------------------------------
 
 func TestWritePathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
@@ -155,10 +142,7 @@ func TestWritePathEndToEnd(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: write data directly into the backend, then read through the block
 // device to prove the read path works end-to-end.
-// ---------------------------------------------------------------------------
 
 func TestReadPathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
@@ -194,10 +178,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: data integrity over the full device — fill every byte, fsync, read
 // back, compare against the backend snapshot.
-// ---------------------------------------------------------------------------
 
 func TestFullDeviceIntegrity(t *testing.T) {
 	const size = 2 * 1024 * 1024
@@ -234,10 +215,7 @@ func TestFullDeviceIntegrity(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: concurrent writers to non-overlapping regions, then verify all data.
 // This exercises the io_uring event loop under real concurrent kernel IO.
-// ---------------------------------------------------------------------------
 
 func TestConcurrentWriters(t *testing.T) {
 	const size = 16 * 1024 * 1024
@@ -301,9 +279,6 @@ func TestConcurrentWriters(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: multiple create/destroy cycles — no leaked fds, no kernel complaints.
-// ---------------------------------------------------------------------------
 
 func TestRepeatedCreateDestroy(t *testing.T) {
 	canRunIntegration(t)
@@ -335,9 +310,6 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: random IO with full data verification.
-// ---------------------------------------------------------------------------
 
 func TestRandomIOVerified(t *testing.T) {
 	const size = 4 * 1024 * 1024
@@ -375,9 +347,6 @@ func TestRandomIOVerified(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: close is idempotent and the block device disappears.
-// ---------------------------------------------------------------------------
 
 func TestCloseIdempotent(t *testing.T) {
 	canRunIntegration(t)
@@ -402,9 +371,6 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: write at the very last block of the device.
-// ---------------------------------------------------------------------------
 
 func TestLastBlock(t *testing.T) {
 	const size = 2 * 1024 * 1024
@@ -427,9 +393,6 @@ func TestLastBlock(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: write the same block twice, verify latest data wins.
-// ---------------------------------------------------------------------------
 
 func TestOverwrite(t *testing.T) {
 	const size = 2 * 1024 * 1024
@@ -454,10 +417,7 @@ func TestOverwrite(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: write through block device, read back through block device (not just
 // backend) to verify the full round-trip through the kernel.
-// ---------------------------------------------------------------------------
 
 func TestWriteThenReadViaBlockDev(t *testing.T) {
 	const size = 2 * 1024 * 1024
@@ -486,9 +446,6 @@ func TestWriteThenReadViaBlockDev(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test: verify the device reports the correct size.
-// ---------------------------------------------------------------------------
 
 func TestDeviceSize(t *testing.T) {
 	const size = 8 * 1024 * 1024
@@ -510,7 +467,6 @@ func TestDeviceSize(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 
 func firstDiff(a, b []byte) int {
 	n := len(a)

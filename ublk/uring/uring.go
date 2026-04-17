@@ -22,7 +22,6 @@ const (
 	offSQEs   = 0x10000000
 )
 
-// SQE128 is a 128-byte submission queue entry with 80 bytes for cmd data.
 type SQE128 struct {
 	Opcode      uint8
 	Flags       uint8
@@ -39,7 +38,6 @@ type SQE128 struct {
 	Cmd         [80]byte
 }
 
-// SQE64 is a standard 64-byte submission queue entry with 16 bytes for cmd data.
 type SQE64 struct {
 	Opcode      uint8
 	Flags       uint8
@@ -56,7 +54,6 @@ type SQE64 struct {
 	Cmd         [16]byte
 }
 
-// CQE is a 16-byte completion queue entry.
 type CQE struct {
 	UserData uint64
 	Res      int32
@@ -113,7 +110,7 @@ type Ring struct {
 	mmapSQ, mmapCQ, mmapSQEs []byte
 }
 
-// NewSQE128 creates a ring with 128-byte SQEs (for io_uring passthrough cmds > 16 bytes).
+// NewSQE128 creates a ring with 128-byte SQEs.
 func NewSQE128(entries uint32) (*Ring, error) {
 	return setup(roundUp2(entries), setupSQE128, sqe128Size)
 }
@@ -198,7 +195,7 @@ func (r *Ring) mmapRings() error {
 	return nil
 }
 
-// SQEntries returns the number of SQ entries.
+// SQEntries returns the SQ size.
 func (r *Ring) SQEntries() uint32 { return r.sqEntries }
 
 // Close releases all ring resources.
@@ -235,7 +232,7 @@ func (r *Ring) nextSQE() unsafe.Pointer {
 	return unsafe.Add(r.sqeBase, uintptr(idx)*r.sqeSize)
 }
 
-// GetSQE128 returns a zeroed 128-byte SQE, or nil if the SQ is full.
+// GetSQE128 returns a zeroed 128-byte SQE, or nil if full.
 func (r *Ring) GetSQE128() *SQE128 {
 	ptr := r.nextSQE()
 	if ptr == nil {
@@ -246,7 +243,7 @@ func (r *Ring) GetSQE128() *SQE128 {
 	return sqe
 }
 
-// GetSQE64 returns a zeroed 64-byte SQE, or nil if the SQ is full.
+// GetSQE64 returns a zeroed 64-byte SQE, or nil if full.
 func (r *Ring) GetSQE64() *SQE64 {
 	ptr := r.nextSQE()
 	if ptr == nil {
@@ -293,7 +290,7 @@ func (r *Ring) Submit() (int, error) {
 	return int(ret), nil
 }
 
-// SubmitAndWait submits pending SQEs and processes task work (IORING_ENTER_GETEVENTS).
+// SubmitAndWait submits SQEs and processes task work.
 func (r *Ring) SubmitAndWait() (int, error) {
 	count := r.flushSQ()
 
@@ -307,7 +304,7 @@ func (r *Ring) SubmitAndWait() (int, error) {
 	return int(ret), nil
 }
 
-// WaitCQE blocks until a CQE is available and returns it.
+// WaitCQE blocks until a CQE is available.
 func (r *Ring) WaitCQE() (*CQE, error) {
 	for {
 		head := atomic.LoadUint32(r.cqHead)
@@ -327,7 +324,7 @@ func (r *Ring) WaitCQE() (*CQE, error) {
 	}
 }
 
-// PeekCQE returns the next CQE without blocking, or nil if none ready.
+// PeekCQE returns the next CQE without blocking, or nil.
 func (r *Ring) PeekCQE() *CQE {
 	head := atomic.LoadUint32(r.cqHead)
 	tail := atomic.LoadUint32(r.cqTail)
@@ -338,7 +335,7 @@ func (r *Ring) PeekCQE() *CQE {
 	return (*CQE)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize))
 }
 
-// SeenCQE advances the CQ head by one.
+// SeenCQE advances the CQ head.
 func (r *Ring) SeenCQE() {
 	atomic.AddUint32(r.cqHead, 1)
 }
