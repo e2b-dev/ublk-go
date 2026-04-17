@@ -30,13 +30,24 @@ func TestUblkStructSizes(t *testing.T) {
 	}
 }
 
+func TestNewInvalidSize(t *testing.T) {
+	backend := newMemBackend(4096)
+
+	if _, err := New(backend, 0); err == nil {
+		t.Error("New(size=0) should fail")
+	}
+	if _, err := New(backend, 1000); err == nil {
+		t.Error("New(size=1000) should fail (not multiple of 512)")
+	}
+}
+
 func canRunIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Skip("requires root (run: sudo go test -v -count=1 ./ublk/)")
+		t.Skip("requires root")
 	}
 	if _, err := os.Stat("/dev/ublk-control"); err != nil {
-		t.Skip("ublk_drv not loaded (run: sudo modprobe ublk_drv)")
+		t.Skip("ublk_drv not loaded")
 	}
 }
 
@@ -104,8 +115,6 @@ func openBlkDev(t *testing.T, path string, flags int) int {
 	return fd
 }
 
-// to prove the write path works end-to-end through the kernel.
-
 func TestWritePathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
@@ -116,7 +125,6 @@ func TestWritePathEndToEnd(t *testing.T) {
 		pattern[i] = byte(i*7 + 13)
 	}
 
-	// Write via block device at several offsets.
 	offsets := []int64{0, 4096, 2 * 4096, 1024 * 1024, size - 4096}
 	for _, off := range offsets {
 		n, err := unix.Pwrite(fd, pattern, off)
@@ -125,7 +133,6 @@ func TestWritePathEndToEnd(t *testing.T) {
 		}
 	}
 
-	// Read directly from the backend to verify kernel → io_uring → backend path.
 	for _, off := range offsets {
 		got := make([]byte, 4096)
 		backend.ReadAt(got, off)
@@ -139,24 +146,20 @@ func TestWritePathEndToEnd(t *testing.T) {
 	}
 }
 
-// device to prove the read path works end-to-end.
-
 func TestReadPathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
 
-	// Plant known data directly in the backend.
 	pattern := make([]byte, 4096)
 	rand.Read(pattern)
-
-	off := int64(512 * 1024) // 512 KB in
+	off := int64(512 * 1024)
 	backend.WriteAt(pattern, off)
 
-	// Drop page cache so the kernel must fetch from the ublk device.
+	// Drop page cache.
 	flushFd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
 	if err == nil {
-		unix.Syscall(unix.SYS_IOCTL, uintptr(flushFd), 0x1261 /* BLKFLSBUF */, 0)
+		unix.Syscall(unix.SYS_IOCTL, uintptr(flushFd), 0x1261, 0)
 		unix.Close(flushFd)
 	}
 
@@ -167,7 +170,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 	}
 
 	if !bytes.Equal(got, pattern) {
-		t.Error("block device returned different data than what's in the backend")
+		t.Error("block device returned different data than backend")
 	}
 
 	if backend.reads.Load() == 0 {
@@ -175,14 +178,11 @@ func TestReadPathEndToEnd(t *testing.T) {
 	}
 }
 
-// back, compare against the backend snapshot.
-
 func TestFullDeviceIntegrity(t *testing.T) {
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
-	// Fill with block-number-based pattern.
 	const blk = 4096
 	for off := int64(0); off < size; off += blk {
 		buf := make([]byte, blk)
@@ -196,7 +196,6 @@ func TestFullDeviceIntegrity(t *testing.T) {
 
 	unix.Fsync(fd)
 
-	// Read back every block from the block device and compare to backend.
 	snap := backend.snapshot()
 	for off := int64(0); off < size; off += blk {
 		got := make([]byte, blk)
@@ -211,8 +210,6 @@ func TestFullDeviceIntegrity(t *testing.T) {
 		}
 	}
 }
-
-// This exercises the io_uring event loop under real concurrent kernel IO.
 
 func TestConcurrentWriters(t *testing.T) {
 	const size = 16 * 1024 * 1024
@@ -240,7 +237,6 @@ func TestConcurrentWriters(t *testing.T) {
 			base := int64(id) * blocksPerWorker * blk
 			for i := range blocksPerWorker {
 				buf := make([]byte, blk)
-				// Unique per worker+block pattern.
 				for j := range buf {
 					buf[j] = byte(id ^ i ^ j)
 				}
@@ -258,7 +254,6 @@ func TestConcurrentWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify every block in the backend.
 	for w := range workers {
 		base := int64(w) * blocksPerWorker * blk
 		for i := range blocksPerWorker {
@@ -291,13 +286,11 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 			t.Fatalf("cycle %d: block device missing: %v", cycle, err)
 		}
 
-		// Do a small IO to prove it works.
 		fd, err := unix.Open(path, unix.O_RDWR|unix.O_SYNC, 0)
 		if err != nil {
 			t.Fatalf("cycle %d open: %v", cycle, err)
 		}
-		buf := []byte("cycle")
-		unix.Pwrite(fd, buf, 0)
+		unix.Pwrite(fd, []byte("cycle"), 0)
 		unix.Close(fd)
 
 		if err := dev.Close(); err != nil {
@@ -314,7 +307,6 @@ func TestRandomIOVerified(t *testing.T) {
 	const blk = 4096
 	const iterations = 200
 
-	// Track what we wrote at each block offset.
 	written := make(map[int64][]byte)
 	maxBlocks := int64(size / blk)
 
@@ -331,7 +323,6 @@ func TestRandomIOVerified(t *testing.T) {
 		written[off] = buf
 	}
 
-	// Verify every written block matches the backend.
 	for off, expected := range written {
 		got := make([]byte, blk)
 		backend.ReadAt(got, off)
@@ -359,7 +350,6 @@ func TestCloseIdempotent(t *testing.T) {
 		}
 	}
 
-	// Block device should be gone.
 	if _, err := os.Stat(path); err == nil {
 		t.Errorf("block device %s still exists after Close", path)
 	}
@@ -409,8 +399,6 @@ func TestOverwrite(t *testing.T) {
 	}
 }
 
-// backend) to verify the full round-trip through the kernel.
-
 func TestWriteThenReadViaBlockDev(t *testing.T) {
 	const size = 2 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
@@ -449,12 +437,98 @@ func TestDeviceSize(t *testing.T) {
 	defer unix.Close(fd)
 
 	var blkSize uint64
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), 0x80081272 /* BLKGETSIZE64 */, uintptr(unsafe.Pointer(&blkSize)))
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), 0x80081272, uintptr(unsafe.Pointer(&blkSize)))
 	if errno != 0 {
 		t.Fatalf("BLKGETSIZE64: %v", errno)
 	}
 	if blkSize != size {
 		t.Errorf("device size = %d, want %d", blkSize, size)
+	}
+}
+
+func TestSmallestDevice(t *testing.T) {
+	const size = 512
+	dev, backend := makeDevice(t, size)
+	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+
+	wbuf := make([]byte, 512)
+	for i := range wbuf {
+		wbuf[i] = 0xCD
+	}
+	if n, err := unix.Pwrite(fd, wbuf, 0); err != nil || n != 512 {
+		t.Fatalf("pwrite: n=%d err=%v", n, err)
+	}
+
+	got := make([]byte, 512)
+	backend.ReadAt(got, 0)
+	if !bytes.Equal(got, wbuf) {
+		t.Error("smallest device write mismatch")
+	}
+}
+
+func TestReadUnwrittenRegion(t *testing.T) {
+	const size = 2 * 1024 * 1024
+	dev, _ := makeDevice(t, size)
+	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
+
+	buf := make([]byte, 4096)
+	n, err := unix.Pread(fd, buf, 0)
+	if err != nil || n != 4096 {
+		t.Fatalf("pread: n=%d err=%v", n, err)
+	}
+
+	zeros := make([]byte, 4096)
+	if !bytes.Equal(buf, zeros) {
+		t.Error("unwritten region should be zeros")
+	}
+}
+
+func TestBlockDevicePath(t *testing.T) {
+	canRunIntegration(t)
+
+	backend := newMemBackend(1024 * 1024)
+	dev, err := New(backend, 1024*1024)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer dev.Close()
+
+	path := dev.BlockDevicePath()
+	if path == "" {
+		t.Fatal("BlockDevicePath is empty")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("block device %s does not exist: %v", path, err)
+	}
+}
+
+func TestMultipleDevices(t *testing.T) {
+	canRunIntegration(t)
+
+	const n = 3
+	devs := make([]*Device, n)
+	for i := range n {
+		backend := newMemBackend(1024 * 1024)
+		dev, err := New(backend, 1024*1024)
+		if err != nil {
+			t.Fatalf("New device %d: %v", i, err)
+		}
+		devs[i] = dev
+	}
+
+	paths := make(map[string]bool)
+	for _, d := range devs {
+		p := d.BlockDevicePath()
+		if paths[p] {
+			t.Errorf("duplicate path: %s", p)
+		}
+		paths[p] = true
+	}
+
+	for i := len(devs) - 1; i >= 0; i-- {
+		if err := devs[i].Close(); err != nil {
+			t.Errorf("Close device %d: %v", i, err)
+		}
 	}
 }
 
