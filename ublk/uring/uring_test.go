@@ -228,3 +228,28 @@ func TestManyCycles(t *testing.T) {
 		}
 	}
 }
+
+func TestRoundUp2(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   uint32
+		want uint32
+	}{
+		{0, 1},
+		{1, 1},
+		{2, 2},
+		{3, 4},
+		{4, 4},
+		{5, 8},
+		{7, 8},
+		{8, 8},
+		{9, 16},
+	}
+
+	for _, tc := range tests {
+		if got := roundUp2(tc.in); got != tc.want {
+			t.Fatalf("roundUp2(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
