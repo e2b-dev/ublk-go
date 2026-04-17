@@ -53,6 +53,21 @@ need from day one are `Backend`, `New`, and `(*Device).Path` /
 `github.com/e2b-dev/ublk-go/ublk/uring` is intentionally separate —
 most users don't touch it.
 
+> [!IMPORTANT]
+> **Heads up**: the kernel default is **only 64 ublk devices** and
+> most distros cap `ulimit -n` at 1024. If you plan to run more than
+> ~15 devices concurrently (each uses 3 fds), raise both before doing
+> anything real:
+>
+> ```bash
+> sudo install -m0644 etc/ublk.conf /etc/modprobe.d/ && \
+> sudo rmmod ublk_drv && sudo modprobe ublk_drv
+> ulimit -n 65536    # or systemd LimitNOFILE=65536
+> ```
+>
+> See [Production setup](#production-setup-recommended-for-serious-use)
+> below for the full story.
+
 ## Production setup (recommended for serious use)
 
 Three limits to raise for any non-trivial deployment. With the defaults
