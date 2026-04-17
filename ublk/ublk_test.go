@@ -7,8 +7,6 @@ import (
 	"io"
 	"math/big"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -153,16 +151,6 @@ func canRunIntegration(t *testing.T) {
 	}
 }
 
-func TestMain(m *testing.M) {
-	if os.Getuid() == 0 {
-		// Reload module to clean stale devices from crashed runs.
-		if matches, _ := filepath.Glob("/dev/ublkc*"); len(matches) > 0 {
-			exec.Command("rmmod", "-f", "ublk_drv").Run()
-			exec.Command("modprobe", "ublk_drv").Run()
-		}
-	}
-	os.Exit(m.Run())
-}
 
 // memBackend is a concurrency-safe in-memory block device.
 type memBackend struct {
