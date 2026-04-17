@@ -1,0 +1,24 @@
+{
+  "name": "ublk-go",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "GOFLAGS": "-tags=integration"
+  },
+  "runArgs": [
+    "--privileged",
+    "--volume=/dev:/dev",
+    "--volume=/lib/modules:/lib/modules:ro"
+  ],
+  "postCreateCommand": "go mod download",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go"
+      ]
+    }
+  }
+}

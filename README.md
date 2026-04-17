@@ -247,6 +247,33 @@ hides `ublk_integration_test.go`, tell the Go toolchain about the tag once:
 go env -w GOFLAGS=-tags=integration
 ```
 
+### Dev container / Copilot agent setup
+
+For an isolated development environment, this repo now ships a
+[dev container](.devcontainer/devcontainer.json) that installs the same
+core tooling the project expects (`golangci-lint`, `e2fsprogs`, Go 1.25,
+and `GOFLAGS=-tags=integration`).
+
+The dev container runs `--privileged` and binds the host `/dev` and
+`/lib/modules` so integration tests can talk to the **host** kernel's
+`ublk_drv`. That makes `make build`, `make test-unit`, and `make lint`
+work out of the box inside the container, and also lets `make
+test-integration` work when the host is Linux and exposes `ublk_drv`.
+
+Host requirements still apply — a container cannot emulate the kernel
+side of ublk on its own:
+
+```bash
+sudo modprobe ublk_drv
+ls -l /dev/ublk-control
+```
+
+For GitHub Copilot cloud agent sessions, the repo also ships
+[`.github/workflows/copilot-setup-steps.yml`](.github/workflows/copilot-setup-steps.yml),
+which preinstalls the same tooling, enables the `integration` build tag,
+warms the Go module cache, and loads `ublk_drv` on the runner when
+available.
+
 ## Future work
 
 See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned devices, etc.).
