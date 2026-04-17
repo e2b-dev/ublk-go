@@ -1,4 +1,4 @@
-.PHONY: test test-integration build lint
+.PHONY: test test-integration build lint fmt
 
 test:
 	go test -v -count=1 -race ./ublk/uring/ ./ublk/
@@ -11,6 +11,10 @@ build:
 	go build ./...
 
 lint:
-	gofmt -w .
+	test -z "$$(gofmt -l .)"
 	golangci-lint run ./...
+	go mod verify
+
+fmt:
+	gofmt -w .
 	go mod tidy
