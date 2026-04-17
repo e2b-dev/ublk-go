@@ -14,10 +14,9 @@ type worker struct {
 	bufSize int
 
 	ioRing  *ring
-	ioDescs []byte // mmap'd ublksrv_io_desc array
-
-	bufPool []byte   // contiguous buffer pool, one bufSize region per tag
-	bufs    [][]byte // per-tag slices into bufPool
+	ioDescs []byte
+	bufPool []byte
+	bufs    [][]byte
 }
 
 func newWorker(dev *Device, qid, depth uint16, bufSize int) *worker {
@@ -29,10 +28,12 @@ func newWorker(dev *Device, qid, depth uint16, bufSize int) *worker {
 	}
 }
 
+// init creates the IO ring, mmaps descriptors, allocates buffers,
+// and prepares (but does NOT submit) the initial FETCH_REQ SQEs.
 func (w *worker) init() error {
 	var err error
 
-	w.ioRing, err = newRing(uint32(w.depth))
+	w.ioRing, err = newIORing(uint32(w.depth))
 	if err != nil {
 		return err
 	}
@@ -44,56 +45,26 @@ func (w *worker) init() error {
 
 	w.allocBuffers()
 
-	if err := w.submitInitialFetches(); err != nil {
-		w.cleanup()
-		return err
-	}
-
-	return nil
-}
-
-func (w *worker) mmapDescs() error {
-	mmapSize := int(w.depth) * int(sizeofIODesc)
-	mmapOff := int64(w.qid) * int64(maxQueueDepth) * int64(sizeofIODesc)
-
-	data, err := unix.Mmap(
-		w.dev.charFD,
-		mmapOff,
-		mmapSize,
-		unix.PROT_READ,
-		unix.MAP_SHARED|unix.MAP_POPULATE,
-	)
-	if err != nil {
-		return err
-	}
-	w.ioDescs = data
-	return nil
-}
-
-func (w *worker) allocBuffers() {
-	total := int(w.depth) * w.bufSize
-	w.bufPool = alignedAlloc(total, 4096)
-	w.bufs = make([][]byte, w.depth)
-	for i := range w.depth {
-		off := int(i) * w.bufSize
-		w.bufs[i] = w.bufPool[off : off+w.bufSize]
-	}
-}
-
-func (w *worker) submitInitialFetches() error {
 	for tag := uint16(0); tag < w.depth; tag++ {
 		w.prepareFetch(tag)
 	}
-	_, err := w.ioRing.submit()
-	return err
+
+	return nil
 }
 
-// run is the main IO processing loop. It runs in its own goroutine.
-func (w *worker) run() {
+// run submits the prepared FETCH_REQ, signals ready, then enters the IO loop.
+// Must be called on its own goroutine.
+func (w *worker) run(ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer w.dev.wg.Done()
 	defer w.cleanup()
+
+	if _, err := w.ioRing.submit(); err != nil {
+		ready <- err
+		return
+	}
+	ready <- nil
 
 	for {
 		c, err := w.ioRing.waitCQE()
@@ -122,6 +93,34 @@ func (w *worker) run() {
 		if _, err := w.ioRing.submit(); err != nil {
 			return
 		}
+	}
+}
+
+func (w *worker) mmapDescs() error {
+	mmapSize := int(w.depth) * int(sizeofIODesc)
+	mmapOff := int64(w.qid) * int64(maxQueueDepth) * int64(sizeofIODesc)
+
+	data, err := unix.Mmap(
+		w.dev.charFD,
+		mmapOff,
+		mmapSize,
+		unix.PROT_READ,
+		unix.MAP_SHARED|unix.MAP_POPULATE,
+	)
+	if err != nil {
+		return err
+	}
+	w.ioDescs = data
+	return nil
+}
+
+func (w *worker) allocBuffers() {
+	total := int(w.depth) * w.bufSize
+	w.bufPool = alignedAlloc(total, 4096)
+	w.bufs = make([][]byte, w.depth)
+	for i := range w.depth {
+		off := int(i) * w.bufSize
+		w.bufs[i] = w.bufPool[off : off+w.bufSize]
 	}
 }
 
@@ -191,7 +190,7 @@ func (w *worker) handleIO(tag uint16) int32 {
 }
 
 func (w *worker) prepareFetch(tag uint16) {
-	sqe := w.ioRing.getSQE()
+	sqe := w.ioRing.getSQE64()
 	sqe.Opcode = opUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOFetchReq)
@@ -207,7 +206,7 @@ func (w *worker) prepareFetch(tag uint16) {
 }
 
 func (w *worker) prepareCommitAndFetch(tag uint16, result int32) {
-	sqe := w.ioRing.getSQE()
+	sqe := w.ioRing.getSQE64()
 	sqe.Opcode = opUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOCommitAndFetchReq)

@@ -91,17 +91,14 @@ func New(backend Backend, cfg Config) (*Device, error) {
 
 	cleanup := func() { _ = dev.shutdown() }
 
-	maxIOBufBytes := uint32(cfg.QueueDepth) // just a temp; real value below
-	// max_sectors is in 512-byte units. 128KB max IO is a sane default.
-	maxSectors := uint32(256)
-	maxIOBufBytes = maxSectors * 512
+	maxSectors := uint32(256) // 128KB max IO
+	maxIOBufBytes := maxSectors * 512
 
 	if err := dev.addDev(cfg.Queues, cfg.QueueDepth, maxIOBufBytes); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("add device: %w", err)
 	}
 
-	// The kernel may have adjusted maxIOBufBytes.
 	bufSize := int(dev.info.MaxIOBufBytes)
 	if bufSize == 0 {
 		bufSize = int(maxIOBufBytes)
@@ -121,15 +118,12 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		return nil, fmt.Errorf("set params: %w", err)
 	}
 
-	// Initialize all workers BEFORE START_DEV.
-	// Each worker creates its io_uring, mmaps IO descriptors, allocates buffers,
-	// and submits initial FETCH_REQ commands. The kernel requires all queues
-	// to have submitted FETCH_REQ before START_DEV will succeed.
+	// Phase 1: Init workers — create IO rings, mmap descriptors, allocate
+	// buffers, prepare FETCH_REQ SQEs (but do NOT submit yet).
 	dev.workers = make([]*worker, cfg.Queues)
 	for i := range cfg.Queues {
 		w := newWorker(dev, uint16(i), cfg.QueueDepth, bufSize)
 		if err := w.init(); err != nil {
-			// Clean up already-initialized workers.
 			for j := range i {
 				dev.workers[j].cleanup()
 			}
@@ -139,18 +133,31 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		dev.workers[i] = w
 	}
 
-	if err := dev.startDev(); err != nil {
-		for _, w := range dev.workers {
-			w.cleanup()
-		}
-		cleanup()
-		return nil, fmt.Errorf("start device: %w", err)
+	// Phase 2: Launch worker goroutines. Each goroutine pins its OS thread,
+	// submits the FETCH_REQ via io_uring_enter, then signals ready.
+	// The FETCH_REQ must be submitted from the worker threads because the
+	// kernel's START_DEV handler blocks until all FETCH_REQ are processed,
+	// and that processing must happen on separate threads concurrently.
+	readyChs := make([]chan error, cfg.Queues)
+	for i, w := range dev.workers {
+		readyChs[i] = make(chan error, 1)
+		dev.wg.Add(1)
+		go w.run(readyChs[i])
 	}
 
-	// Launch worker goroutines to process IO.
-	for _, w := range dev.workers {
-		dev.wg.Add(1)
-		go w.run()
+	// Wait for all workers to have submitted their FETCH_REQ.
+	for i, ch := range readyChs {
+		if err := <-ch; err != nil {
+			cleanup()
+			return nil, fmt.Errorf("queue %d FETCH_REQ: %w", i, err)
+		}
+	}
+
+	// Phase 3: START_DEV. The kernel blocks here until it has processed all
+	// FETCH_REQ (which the worker threads already submitted above).
+	if err := dev.startDev(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("start device: %w", err)
 	}
 
 	return dev, nil

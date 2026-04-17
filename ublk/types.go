@@ -16,6 +16,8 @@ const (
 	maxQueueDepth = 4096
 
 	paramTypeBasic = 1 << 0
+
+	attrVolatileCache = 1 << 2
 )
 
 // Legacy control command numbers.

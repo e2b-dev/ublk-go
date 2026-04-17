@@ -36,6 +36,9 @@ func TestKernelABI(t *testing.T) {
 	if unsafe.Sizeof(sqe128{}) != 128 {
 		t.Fatalf("sqe128 is %d bytes, kernel expects 128", unsafe.Sizeof(sqe128{}))
 	}
+	if unsafe.Sizeof(sqe64{}) != 64 {
+		t.Fatalf("sqe64 is %d bytes, kernel expects 64", unsafe.Sizeof(sqe64{}))
+	}
 	if unsafe.Sizeof(cqe{}) != 16 {
 		t.Fatalf("cqe is %d bytes, kernel expects 16 (not 32!)", unsafe.Sizeof(cqe{}))
 	}
@@ -54,17 +57,16 @@ func TestKernelABI(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIoUringNOPRoundTrip(t *testing.T) {
-	r, err := newRing(16)
+	r, err := newIORing(16)
 	if err != nil {
-		t.Fatalf("newRing: %v", err)
+		t.Fatalf("newIORing: %v", err)
 	}
 	defer r.close()
 
-	// Submit 16 NOPs with distinct user data, verify all 16 come back.
 	for i := range 16 {
-		sqe := r.getSQE()
+		sqe := r.getSQE64()
 		if sqe == nil {
-			t.Fatalf("getSQE nil at %d", i)
+			t.Fatalf("getSQE64 nil at %d", i)
 		}
 		sqe.Opcode = 0 // IORING_OP_NOP
 		sqe.UserData = uint64(i) + 1
@@ -104,17 +106,17 @@ func TestIoUringNOPRoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIoUringManyCycles(t *testing.T) {
-	r, err := newRing(4)
+	r, err := newIORing(4)
 	if err != nil {
-		t.Fatalf("newRing: %v", err)
+		t.Fatalf("newIORing: %v", err)
 	}
 	defer r.close()
 
 	for cycle := range 200 {
 		for i := range int(r.sqEntries) {
-			sqe := r.getSQE()
+			sqe := r.getSQE64()
 			if sqe == nil {
-				t.Fatalf("cycle %d: getSQE nil at %d", cycle, i)
+				t.Fatalf("cycle %d: getSQE64 nil at %d", cycle, i)
 			}
 			sqe.Opcode = 0
 			sqe.UserData = uint64(cycle*1000 + i)

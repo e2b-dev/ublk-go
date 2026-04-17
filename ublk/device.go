@@ -31,7 +31,7 @@ func openDevice(backend Backend) (*Device, error) {
 		return nil, fmt.Errorf("open /dev/ublk-control: %w", err)
 	}
 
-	ctrlRing, err := newRing(4)
+	ctrlRing, err := newCtrlRing(4)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("create control ring: %w", err)
@@ -101,10 +101,16 @@ func (d *Device) openCharDev() error {
 func (d *Device) setParams(size uint64, blockSize uint32, maxSectors uint32) error {
 	blockShift := trailingZeros32(blockSize)
 
+	var attrs uint32
+	if _, ok := d.backend.(Flusher); ok {
+		attrs |= attrVolatileCache
+	}
+
 	params := ublkParams{
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
 		Basic: paramBasic{
+			Attrs:           attrs,
 			LogicalBSShift:  blockShift,
 			PhysicalBSShift: blockShift,
 			IOOptShift:      blockShift,
@@ -151,7 +157,7 @@ func (d *Device) delDev() error {
 
 // ctrlCommand submits a control command via io_uring passthrough.
 func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
-	sqe := d.ctrlRing.getSQE()
+	sqe := d.ctrlRing.getSQE128()
 	if sqe == nil {
 		return fmt.Errorf("control ring SQ full")
 	}
