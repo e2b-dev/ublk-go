@@ -217,32 +217,23 @@ func (d *Device) Close() (retErr error) {
 }
 
 func (d *Device) shutdown() error {
-	// Run STOP + DEL with a timeout. These can block forever if the kernel
-	// is waiting for task work on dead worker threads. Using a goroutine
-	// with a timeout prevents shutdown from hanging the caller.
-	done := make(chan error, 1)
-	go func() {
-		_ = d.stopDev()
-		var err error
-		if d.id >= 0 {
-			err = d.delDev()
-		}
-		done <- err
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-	}
-
-	// Close the char fd. This causes the kernel to release the device,
-	// which cancels all pending FETCH_REQ and unblocks workers.
+	// Close the char fd first. This triggers the kernel's ublk_ch_release,
+	// which cancels all pending FETCH_REQ (generating -ENODEV CQEs on
+	// worker rings) and transitions the device to DEAD state.
 	if d.charFD >= 0 {
 		_ = unix.Close(d.charFD)
 		d.charFD = -1
 	}
 
+	// Workers receive -ENODEV CQEs, see res < 0, and exit.
 	d.wg.Wait()
+
+	// Device is now DEAD. Send STOP (no-op if already stopped) and DEL.
+	_ = d.stopDev()
+	var err error
+	if d.id >= 0 {
+		err = d.delDev()
+	}
 
 	if d.ctrlRing != nil {
 		_ = d.ctrlRing.close()
@@ -253,7 +244,7 @@ func (d *Device) shutdown() error {
 		d.ctrlFD = -1
 	}
 
-	return nil
+	return err
 }
 
 func trailingZeros32(v uint32) uint8 {
