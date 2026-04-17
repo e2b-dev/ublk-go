@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration probe chain build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe chain flushbench build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -20,6 +20,14 @@ probe:
 chain:
 	go build -race -o /tmp/ublk-chain ./example/chain
 	sudo /tmp/ublk-chain
+
+# Diagnose where time is spent during filesystem flushes.
+# Prints per-backend-call trace with microsecond timestamps so you can
+# see whether our stack is slow or the kernel is waiting on its own
+# timers.
+flushbench:
+	go build -race -o /tmp/ublk-flushbench ./example/flushbench
+	sudo /tmp/ublk-flushbench
 
 build:
 	go build ./...
