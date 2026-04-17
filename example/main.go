@@ -16,7 +16,7 @@ import (
 	"github.com/e2b-dev/ublk-go/ublk"
 )
 
-const deviceSize = 256 * 1024 * 1024 // 256 MiB
+const size = 256 * 1024 * 1024 // 256 MiB
 
 type memBackend struct {
 	mu   sync.RWMutex
@@ -35,14 +35,8 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
 	return copy(m.data[off:off+int64(len(p))], p), nil
 }
 
-func (m *memBackend) Flush() error { return nil }
-
 func main() {
-	backend := &memBackend{data: make([]byte, deviceSize)}
-
-	dev, err := ublk.New(backend, ublk.Config{
-		Size: deviceSize,
-	})
+	dev, err := ublk.New(&memBackend{data: make([]byte, size)}, size)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ublk.New: %v\n", err)
 		os.Exit(1)

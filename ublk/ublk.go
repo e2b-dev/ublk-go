@@ -1,10 +1,7 @@
 // Package ublk implements Linux userspace block devices via the ublk driver and io_uring.
 package ublk
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
 // Backend is the interface that block device implementations must satisfy.
 // ReadAt and WriteAt must be safe for concurrent use.
@@ -13,76 +10,35 @@ type Backend interface {
 	WriteAt(p []byte, off int64) (n int, err error)
 }
 
-// Config configures a ublk block device.
-type Config struct {
-	// Size of the block device in bytes. Required; must be > 0 and a multiple of BlockSize.
-	Size uint64
-
-	// BlockSize is the logical block size in bytes.
-	// Must be a power of 2, >= 512. Default: 512.
-	BlockSize uint32
-
-	// QueueDepth is the per-queue IO depth. Must be a power of 2, <= 4096. Default: 128.
-	QueueDepth uint16
-}
-
-func (c *Config) setDefaults() {
-	if c.BlockSize == 0 {
-		c.BlockSize = 512
-	}
-	if c.QueueDepth == 0 {
-		c.QueueDepth = 128
-	}
-}
-
-func (c *Config) validate() error {
-	if c.Size == 0 {
-		return errors.New("Size must be > 0")
-	}
-	if c.BlockSize < 512 || c.BlockSize&(c.BlockSize-1) != 0 {
-		return fmt.Errorf("BlockSize must be a power of 2 >= 512, got %d", c.BlockSize)
-	}
-	if c.Size%uint64(c.BlockSize) != 0 {
-		return errors.New("Size must be a multiple of BlockSize")
-	}
-	if c.QueueDepth == 0 || c.QueueDepth&(c.QueueDepth-1) != 0 || c.QueueDepth > maxQueueDepth {
-		return fmt.Errorf("QueueDepth must be a power of 2 in [1, %d], got %d", maxQueueDepth, c.QueueDepth)
-	}
-	return nil
-}
-
-// New creates and starts a ublk block device backed by the given Backend.
-// The block device is available at Device.BlockDevicePath() after this returns.
+// New creates and starts a ublk block device of the given size (in bytes),
+// backed by the given Backend. The block device is available at
+// Device.BlockDevicePath() after this returns.
 // Call Device.Close() to stop and remove the device.
-func New(backend Backend, cfg Config) (*Device, error) {
-	cfg.setDefaults()
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+func New(backend Backend, size uint64) (*Device, error) {
+	if size == 0 || size%512 != 0 {
+		return nil, fmt.Errorf("size must be > 0 and a multiple of 512")
 	}
 
 	dev, err := openDevice(backend)
 	if err != nil {
 		return nil, err
 	}
-
 	cleanup := func() { _ = dev.shutdown() }
 
-	maxSectors := uint32(256) // 128KB max IO
-	maxIOBufBytes := maxSectors * 512
+	const (
+		queueDepth    = 128
+		maxSectors    = 256 // 128KB max IO, in 512-byte units
+		maxIOBufBytes = maxSectors * 512
+	)
 
-	const nrQueues = 1
-	if err := dev.addDev(nrQueues, cfg.QueueDepth, maxIOBufBytes); err != nil {
+	if err := dev.addDev(1, queueDepth, maxIOBufBytes); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("add device: %w", err)
 	}
 
 	bufSize := int(dev.info.MaxIOBufBytes)
 	if bufSize == 0 {
-		bufSize = int(maxIOBufBytes)
-	}
-	actualMaxSectors := uint32(bufSize / 512)
-	if actualMaxSectors == 0 {
-		actualMaxSectors = 1
+		bufSize = maxIOBufBytes
 	}
 
 	if err := dev.openCharDev(); err != nil {
@@ -90,40 +46,27 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		return nil, fmt.Errorf("open char device: %w", err)
 	}
 
-	if err := dev.setParams(cfg.Size, cfg.BlockSize, actualMaxSectors); err != nil {
+	if err := dev.setParams(size, uint32(bufSize/512)); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("set params: %w", err)
 	}
 
-	dev.workers = make([]*worker, nrQueues)
-	for i := range nrQueues {
-		w := newWorker(dev, uint16(i), cfg.QueueDepth, bufSize)
-		if err := w.init(); err != nil {
-			for j := range i {
-				dev.workers[j].cleanup()
-			}
-			cleanup()
-			return nil, fmt.Errorf("init queue %d: %w", i, err)
-		}
-		dev.workers[i] = w
+	w := newWorker(dev, 0, queueDepth, bufSize)
+	if err := w.init(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("init queue: %w", err)
+	}
+	dev.workers = []*worker{w}
+
+	ready := make(chan error, 1)
+	dev.wg.Add(1)
+	go w.run(ready)
+
+	if err := <-ready; err != nil {
+		cleanup()
+		return nil, fmt.Errorf("submit FETCH: %w", err)
 	}
 
-	readyChs := make([]chan error, nrQueues)
-	for i, w := range dev.workers {
-		readyChs[i] = make(chan error, 1)
-		dev.wg.Add(1)
-		go w.run(readyChs[i])
-	}
-	for i, ch := range readyChs {
-		if err := <-ch; err != nil {
-			cleanup()
-			return nil, fmt.Errorf("queue %d FETCH: %w", i, err)
-		}
-	}
-
-	// Phase 3: START_DEV. The kernel's handler blocks until all FETCH_REQ
-	// are processed. The workers submitted them above on their own threads,
-	// so the kernel can process them concurrently with this call.
 	if err := dev.startDev(); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("start device: %w", err)

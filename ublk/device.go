@@ -98,17 +98,15 @@ func (d *Device) openCharDev() error {
 	return fmt.Errorf("char device %s not created: %w", path, err)
 }
 
-func (d *Device) setParams(size uint64, blockSize uint32, maxSectors uint32) error {
-	blockShift := trailingZeros32(blockSize)
-
+func (d *Device) setParams(size uint64, maxSectors uint32) error {
 	params := ublkParams{
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
 		Basic: paramBasic{
-			LogicalBSShift:  blockShift,
-			PhysicalBSShift: blockShift,
-			IOOptShift:      blockShift,
-			IOMinShift:      blockShift,
+			LogicalBSShift:  9, // 512 bytes
+			PhysicalBSShift: 9,
+			IOOptShift:      9,
+			IOMinShift:      9,
 			MaxSectors:      maxSectors,
 			DevSectors:      size / 512,
 		},
@@ -241,14 +239,3 @@ func (d *Device) shutdown() error {
 	return err
 }
 
-func trailingZeros32(v uint32) uint8 {
-	if v == 0 {
-		return 0
-	}
-	var n uint8
-	for v&1 == 0 {
-		n++
-		v >>= 1
-	}
-	return n
-}

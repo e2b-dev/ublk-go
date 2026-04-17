@@ -193,13 +193,11 @@ func (m *memBackend) snapshot() []byte {
 	return s
 }
 
-// makeDevice creates a ublk device and registers cleanup.
-func makeDevice(t *testing.T, size uint64, cfg Config) (*Device, *memBackend) {
+func makeDevice(t *testing.T, size uint64) (*Device, *memBackend) {
 	t.Helper()
 	canRunIntegration(t)
 	backend := newMemBackend(int(size))
-	cfg.Size = size
-	dev, err := New(backend, cfg)
+	dev, err := New(backend, size)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -228,7 +226,7 @@ func openBlkDev(t *testing.T, path string, flags int) int {
 
 func TestWritePathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	pattern := make([]byte, 4096)
@@ -266,7 +264,7 @@ func TestWritePathEndToEnd(t *testing.T) {
 
 func TestReadPathEndToEnd(t *testing.T) {
 	const size = 4 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
 
 	// Plant known data directly in the backend.
@@ -305,7 +303,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 
 func TestFullDeviceIntegrity(t *testing.T) {
 	const size = 2 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	// Fill with block-number-based pattern.
@@ -345,7 +343,7 @@ func TestFullDeviceIntegrity(t *testing.T) {
 
 func TestConcurrentWriters(t *testing.T) {
 	const size = 16 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	path := dev.BlockDevicePath()
 
 	const workers = 8
@@ -412,7 +410,7 @@ func TestConcurrentWriters(t *testing.T) {
 
 func TestConcurrentMixedIO(t *testing.T) {
 	const size = 8 * 1024 * 1024
-	dev, _ := makeDevice(t, size, Config{})
+	dev, _ := makeDevice(t, size)
 	path := dev.BlockDevicePath()
 
 	const goroutines = 16
@@ -469,7 +467,7 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 
 	for cycle := range 5 {
 		backend := newMemBackend(2 * 1024 * 1024)
-		dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
+		dev, err := New(backend, 2*1024*1024)
 		if err != nil {
 			t.Fatalf("cycle %d New: %v", cycle, err)
 		}
@@ -495,50 +493,12 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: 4K block size — verifies DevSectors = size/512 (not size/blockSize).
-// ---------------------------------------------------------------------------
-
-func TestBlockSize4096(t *testing.T) {
-	const size = 4 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{BlockSize: 4096})
-
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
-
-	// Write 4K of random data at offset 0.
-	wbuf := make([]byte, 4096)
-	rand.Read(wbuf)
-	if n, err := unix.Pwrite(fd, wbuf, 0); err != nil || n != 4096 {
-		t.Fatalf("pwrite: n=%d err=%v", n, err)
-	}
-
-	// Write 4K at offset 8K.
-	wbuf2 := make([]byte, 4096)
-	rand.Read(wbuf2)
-	if n, err := unix.Pwrite(fd, wbuf2, 8192); err != nil || n != 4096 {
-		t.Fatalf("pwrite at 8K: n=%d err=%v", n, err)
-	}
-
-	// Verify both writes landed in the backend.
-	got1 := make([]byte, 4096)
-	backend.ReadAt(got1, 0)
-	if !bytes.Equal(got1, wbuf) {
-		t.Error("4K block: data mismatch at offset 0")
-	}
-
-	got2 := make([]byte, 4096)
-	backend.ReadAt(got2, 8192)
-	if !bytes.Equal(got2, wbuf2) {
-		t.Error("4K block: data mismatch at offset 8K")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: random IO with full data verification.
 // ---------------------------------------------------------------------------
 
 func TestRandomIOVerified(t *testing.T) {
 	const size = 4 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	const blk = 4096
@@ -580,7 +540,7 @@ func TestCloseIdempotent(t *testing.T) {
 	canRunIntegration(t)
 
 	backend := newMemBackend(2 * 1024 * 1024)
-	dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
+	dev, err := New(backend, 2*1024*1024)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -605,7 +565,7 @@ func TestCloseIdempotent(t *testing.T) {
 
 func TestLastBlock(t *testing.T) {
 	const size = 2 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	const blk = 4096
@@ -630,7 +590,7 @@ func TestLastBlock(t *testing.T) {
 
 func TestOverwrite(t *testing.T) {
 	const size = 2 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
+	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	const blk = 4096
@@ -658,7 +618,7 @@ func TestOverwrite(t *testing.T) {
 
 func TestWriteThenReadViaBlockDev(t *testing.T) {
 	const size = 2 * 1024 * 1024
-	dev, _ := makeDevice(t, size, Config{})
+	dev, _ := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
 
 	const blk = 4096
@@ -689,7 +649,7 @@ func TestWriteThenReadViaBlockDev(t *testing.T) {
 
 func TestDeviceSize(t *testing.T) {
 	const size = 8 * 1024 * 1024
-	dev, _ := makeDevice(t, size, Config{})
+	dev, _ := makeDevice(t, size)
 
 	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
 	if err != nil {
