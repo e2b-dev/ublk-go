@@ -154,11 +154,10 @@ func canRunIntegration(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	// If stale ublk devices exist from a crashed run, reload the module.
 	if os.Getuid() == 0 {
+		// Reload module to clean stale devices from crashed runs.
 		if matches, _ := filepath.Glob("/dev/ublkc*"); len(matches) > 0 {
-			// Fastest cleanup: reload the kernel module.
-			exec.Command("rmmod", "ublk_drv").Run()
+			exec.Command("rmmod", "-f", "ublk_drv").Run()
 			exec.Command("modprobe", "ublk_drv").Run()
 		}
 	}
