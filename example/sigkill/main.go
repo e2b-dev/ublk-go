@@ -138,16 +138,27 @@ func runParent() error {
 	}
 	log.Printf("child PID %d created %s", cmd.Process.Pid, devPath)
 
-	// Let the child get some writes in-flight.
 	time.Sleep(100 * time.Millisecond)
 
-	// SIGKILL — no userspace cleanup will run; only the kernel's fd
-	// close path can save us.
+	log.Printf("sending SIGKILL to PID %d", cmd.Process.Pid)
 	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
 		return fmt.Errorf("SIGKILL child: %w", err)
 	}
-	_ = cmd.Wait() // reap zombie; error code is ~128+9
-	log.Printf("child reaped after SIGKILL")
+
+	// Reap the zombie, but with a watchdog — if cmd.Wait() blocks,
+	// something in the kernel's exit path (most likely
+	// ublk_ch_release) is stuck, and we want evidence of that rather
+	// than a silent hang.
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- cmd.Wait() }()
+	select {
+	case <-waitErr:
+		log.Printf("child reaped after SIGKILL")
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("cmd.Wait() blocked 10s after SIGKILL (PID %d still not reaped); "+
+			"/proc/%d/stack may tell you which kernel routine is stuck",
+			cmd.Process.Pid, cmd.Process.Pid)
+	}
 
 	if err := waitGone(devPath); err != nil {
 		return err
