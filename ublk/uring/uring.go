@@ -98,9 +98,10 @@ var (
 
 // Ring is an io_uring instance.
 type Ring struct {
-	fd      int
-	p       params
-	sqeSize uintptr
+	fd        int
+	p         params
+	sqeSize   uintptr
+	cancelled int32
 
 	sqHead, sqTail, sqMask, sqFlags *uint32
 	sqArray                         unsafe.Pointer
@@ -203,13 +204,9 @@ func (r *Ring) mmapRings() error {
 // SQEntries returns the SQ size.
 func (r *Ring) SQEntries() uint32 { return r.sqEntries }
 
-// Cancel closes the ring fd, forcing any blocked WaitCQE to return with an error.
-// The ring must still be fully closed with Close() afterwards.
+// Cancel makes WaitCQE return on the next poll cycle.
 func (r *Ring) Cancel() {
-	if r.fd >= 0 {
-		_ = unix.Close(r.fd)
-		r.fd = -1
-	}
+	atomic.StoreInt32(&r.cancelled, 1)
 }
 
 // Close releases all ring resources.
@@ -318,7 +315,7 @@ func (r *Ring) SubmitAndWait() (int, error) {
 	return int(ret), nil
 }
 
-// WaitCQE blocks until a CQE is available.
+// WaitCQE blocks until a CQE is available or the ring is cancelled.
 func (r *Ring) WaitCQE() (*CQE, error) {
 	for {
 		head := atomic.LoadUint32(r.cqHead)
@@ -328,13 +325,13 @@ func (r *Ring) WaitCQE() (*CQE, error) {
 			return (*CQE)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize)), nil
 		}
 
-		_, _, errno := syscall.Syscall6(
-			unix.SYS_IO_URING_ENTER,
-			uintptr(r.fd), 0, 1, enterGetevents, 0, 0,
-		)
-		if errno != 0 && errno != unix.EINTR {
-			return nil, fmt.Errorf("io_uring_enter wait: %w", errno)
+		if atomic.LoadInt32(&r.cancelled) != 0 {
+			return nil, fmt.Errorf("ring cancelled")
 		}
+
+		// Poll with 100ms timeout so Cancel() can interrupt.
+		fds := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
+		unix.Poll(fds, 100)
 	}
 }
 
