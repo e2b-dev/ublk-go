@@ -195,11 +195,6 @@ func (d *Device) BlockDevicePath() string {
 	return fmt.Sprintf("/dev/ublkb%d", d.id)
 }
 
-// DeviceID returns the ublk device ID.
-func (d *Device) DeviceID() int {
-	return d.id
-}
-
 // Close stops and removes the ublk device, releasing all resources.
 func (d *Device) Close() (retErr error) {
 	d.closeOnce.Do(func() {
