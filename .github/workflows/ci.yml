@@ -133,9 +133,17 @@ jobs:
           go-version: "1.25"
           check-latest: false
       - name: Load ublk_drv kernel module
+        # GitHub-hosted runners ship a minimal kernel image; ublk_drv lives in
+        # linux-modules-extra-$(uname -r). Try modprobe first (fast path for
+        # future images that bundle it), fall back to installing the extras
+        # package only when needed.
         run: |
           set -eux
-          sudo modprobe ublk_drv
+          if ! sudo modprobe ublk_drv 2>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+            sudo modprobe ublk_drv
+          fi
           ls -l /dev/ublk-control
       - name: Run integration tests (race + coverage)
         run: |
