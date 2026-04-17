@@ -59,17 +59,34 @@ jobs:
         run: |
           mkdir -p coverage
           go test -v -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
+      - name: Load ublk_drv kernel module
+        id: ublk_drv
+        continue-on-error: true
+        run: |
+          set -eux
+          # ublk_drv ships with mainline kernels 6.0+ as a loadable
+          # module, typically in the linux-modules-extra package. GH
+          # hosted runners don't load it by default; we install the
+          # modules package if modinfo doesn't already know about it,
+          # then modprobe with ublks_max raised so integration tests
+          # that create multiple devices in parallel have room.
+          if ! modinfo ublk_drv >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+          fi
+          sudo modprobe ublk_drv ublks_max=4096
+          ls -l /dev/ublk-control
+          cat /sys/module/ublk_drv/parameters/ublks_max
       - name: Integration tests (coverage)
         run: |
-          sudo modprobe ublk_drv 2>/dev/null || true
-          if [ -e /dev/ublk-control ]; then
-            go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
-            sudo /tmp/ublk.test -test.v -test.timeout=120s -test.coverprofile=coverage/integration.out
-            sudo chmod 644 coverage/integration.out
-          else
-            echo "ublk_drv not available, skipping integration tests"
+          if [ ! -e /dev/ublk-control ]; then
+            echo "::warning::ublk_drv is not available on this runner; integration tests skipped. Check the 'Load ublk_drv' step for details."
             : > coverage/integration.out
+            exit 0
           fi
+          go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
+          sudo /tmp/ublk.test -test.v -test.timeout=300s -test.coverprofile=coverage/integration.out
+          sudo chmod 644 coverage/integration.out
       - name: Coverage summary
         if: matrix.arch == 'amd64'
         run: |

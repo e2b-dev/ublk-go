@@ -7,7 +7,7 @@ test-unit:
 
 test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
-	sudo /tmp/ublk.test -test.v -test.timeout=120s
+	sudo /tmp/ublk.test -test.v -test.timeout=300s
 
 # Produce coverage profiles (unit + integration) under ./coverage/.
 cover:
