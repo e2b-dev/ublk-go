@@ -29,7 +29,7 @@ func newWorker(dev *Device, qid, depth uint16, bufSize int) *worker {
 }
 
 // init creates the IO ring, mmaps descriptors, allocates buffers,
-// and prepares (but does NOT submit) the initial FETCH_REQ SQEs.
+// prepares and submits the initial FETCH_REQ SQEs.
 func (w *worker) init() error {
 	var err error
 
@@ -49,27 +49,20 @@ func (w *worker) init() error {
 		w.prepareFetch(tag)
 	}
 
+	if _, err := w.ioRing.submit(); err != nil {
+		w.cleanup()
+		return err
+	}
+
 	return nil
 }
 
-// run signals ready, submits the prepared FETCH_REQ, then enters the IO loop.
-// Ready is signaled BEFORE submit so that START_DEV and FETCH_REQ submission
-// happen concurrently (matching the ublksrv reference implementation).
-// Must be called on its own goroutine.
-func (w *worker) run(ready chan<- struct{}) {
+// run is the IO event loop. Must be called on its own goroutine.
+func (w *worker) run() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer w.dev.wg.Done()
 	defer w.cleanup()
-
-	// Signal ready BEFORE submit — the main goroutine will send START_DEV
-	// concurrently. The kernel's START_DEV blocks until all FETCH_REQ are
-	// processed, so the ordering is handled by the kernel.
-	close(ready)
-
-	if _, err := w.ioRing.submit(); err != nil {
-		return
-	}
 
 	for {
 		c, err := w.ioRing.waitCQE()
