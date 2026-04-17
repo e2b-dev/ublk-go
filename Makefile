@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration probe build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe chain build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -14,6 +14,12 @@ test-integration:
 probe:
 	go build -race -o /tmp/ublk-probe ./example/probe
 	sudo /tmp/ublk-probe
+
+# Chain two ublk devices in the same process (proxy -> storage) and
+# verify byte-exact data flow through both stacks.
+chain:
+	go build -race -o /tmp/ublk-chain ./example/chain
+	sudo /tmp/ublk-chain
 
 build:
 	go build ./...

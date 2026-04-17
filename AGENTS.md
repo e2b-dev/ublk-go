@@ -8,6 +8,7 @@ history. Keep it factual. Read this before diving in.
 
 ```bash
 make probe           # sudo needed; per-step timeouts; exits non-zero on hang
+make chain           # sudo needed; stacks two ublks (proxy -> storage)
 ```
 
 The probe (`example/probe/main.go`) exercises both sides of the stack:
@@ -27,6 +28,15 @@ If a step hangs beyond the timeout the probe **panics**, which prints a
 full goroutine dump from the Go runtime — this is the single most useful
 artifact when diagnosing ublk-level stalls, because it tells you whether
 the worker is blocked in `WaitCQE`, inside `Backend.*`, or elsewhere.
+
+`make chain` (`example/chain/main.go`) creates two ublk devices in the
+same process: a *storage* ublk with an in-memory backend, then a *proxy*
+ublk whose Backend forwards `Pread`/`Pwrite` calls to the storage's
+block device (opened `O_DIRECT`). I/O written to the proxy's block
+device must appear byte-for-byte at the same offset in the storage's
+in-memory backend. This validates two complete ublk stacks running
+side-by-side, two `LockOSThread`'d workers, and cross-device data
+integrity. If this test passes, composition works.
 
 Other diagnostic commands:
 
