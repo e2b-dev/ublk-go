@@ -504,6 +504,39 @@ func TestBlockDevicePath(t *testing.T) {
 	}
 }
 
+func TestMultipleDevices(t *testing.T) {
+	canRunIntegration(t)
+
+	const n = 3
+	devs := make([]*Device, n)
+	for i := range n {
+		backend := newMemBackend(1024 * 1024)
+		dev, err := New(backend, 1024*1024)
+		if err != nil {
+			for j := range i {
+				devs[j].Close()
+			}
+			t.Fatalf("New device %d: %v", i, err)
+		}
+		devs[i] = dev
+	}
+
+	paths := make(map[string]bool)
+	for _, d := range devs {
+		p := d.BlockDevicePath()
+		if paths[p] {
+			t.Errorf("duplicate path: %s", p)
+		}
+		paths[p] = true
+	}
+
+	for i := len(devs) - 1; i >= 0; i-- {
+		if err := devs[i].Close(); err != nil {
+			t.Errorf("Close device %d: %v", i, err)
+		}
+	}
+}
+
 func firstDiff(a, b []byte) int {
 	n := len(a)
 	if len(b) < n {

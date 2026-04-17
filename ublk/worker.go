@@ -60,10 +60,16 @@ func (w *worker) run(ready chan<- error) {
 	defer w.cleanup()
 
 	_, err := w.ioRing.SubmitAndWait()
-	ready <- err
 	if err != nil {
+		ready <- err
 		return
 	}
+
+	// Signal ready from a separate goroutine so this thread enters WaitCQE
+	// immediately. The kernel processes FETCH_REQ as task work during
+	// WaitCQE, so we must be blocking in io_uring_enter before the main
+	// goroutine calls START_DEV.
+	go func() { ready <- nil }()
 
 	for {
 		c, err := w.ioRing.WaitCQE()
