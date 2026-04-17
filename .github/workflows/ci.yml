@@ -9,6 +9,11 @@ permissions:
   contents: read
 
 jobs:
+  # The 'test' job uploads coverage to Codecov with an OIDC token.
+  # That upload needs id-token: write, so it's granted at job level
+  # (other jobs stay on the default contents:read).
+
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -41,19 +46,34 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4.3.1
       - uses: actions/setup-go@v5.6.0
         with:
           go-version: "1.25"
           check-latest: false
-      - name: Unit tests (race)
-        run: make test-unit
-      - name: Integration tests
+      - name: Unit tests (race + coverage)
+        run: |
+          mkdir -p coverage
+          go test -v -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
+      - name: Integration tests (coverage)
         run: |
           sudo modprobe ublk_drv 2>/dev/null || true
           if [ -e /dev/ublk-control ]; then
-            make test-integration
+            go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
+            sudo /tmp/ublk.test -test.v -test.timeout=120s -test.coverprofile=coverage/integration.out
+            sudo chmod 644 coverage/integration.out
           else
-            echo "ublk_drv not available, skipping"
+            echo "ublk_drv not available, skipping integration tests"
+            : > coverage/integration.out
           fi
+      - name: Upload coverage to Codecov
+        if: matrix.arch == 'amd64'
+        uses: codecov/codecov-action@v5.5.4
+        with:
+          files: coverage/unit.out,coverage/integration.out
+          fail_ci_if_error: false
+          disable_search: true

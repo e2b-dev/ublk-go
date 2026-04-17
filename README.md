@@ -1,5 +1,9 @@
 # ublk-go
 
+[![CI](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/e2b-dev/ublk-go/branch/main/graph/badge.svg)](https://codecov.io/gh/e2b-dev/ublk-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go)
+
 Pure Go library for Linux userspace block devices via the [ublk](https://docs.kernel.org/block/ublk.html) driver and io_uring.
 
 ```
@@ -110,6 +114,8 @@ func (*Device) Close() error
 make test              # unit + integration (integration uses sudo)
 make test-unit         # unit tests only (no root needed)
 make test-integration  # integration tests only (requires root + ublk_drv)
+make cover             # unit + integration with coverage profiles in ./coverage/
+make cover-html        # open HTML coverage report in your browser
 make lint              # gofmt check, go mod tidy check, golangci-lint, go mod verify
 make fmt               # format code and tidy go.mod
 make hooks             # install the repo's pre-commit hook (optional)

@@ -143,6 +143,23 @@ not refactor the order without rerunning `make test-integration` under
   `.vscode/settings.json` has `gopls.build.buildFlags` — but `.vscode/`
   is `.gitignore`d, so don't rely on committing it.
 
+## Coverage
+
+`make cover` produces `coverage/unit.out` + `coverage/integration.out`.
+`make cover-html` opens the integration profile in a browser.
+
+CI (`.github/workflows/ci.yml`, `test` job on amd64) uploads both
+profiles to Codecov via `codecov/codecov-action@v5.5.4`. For a public
+repo the upload is tokenless — it uses GitHub OIDC, which is why the
+`test` job carries `permissions: id-token: write`. If the badge stops
+updating, check that permission and the Codecov integration on the
+repo's settings page; everything else is automatic.
+
+Bare unit tests alone give ~25% coverage because most of the library
+needs root + ublk_drv loaded to exercise. The integration test binary
+pushes the total near ~80% once merged with the unit profile on
+Codecov's side.
+
 ## CI specifics
 
 - `ubuntu-24.04` runner has Go 1.25.8 preinstalled. The workflow passes

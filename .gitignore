@@ -43,3 +43,6 @@ mmap_test
 /probe
 /chain
 /flushbench
+
+# coverage reports
+/coverage/
