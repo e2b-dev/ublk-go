@@ -184,13 +184,21 @@ Always prefer `sync -f`.
 
 ### drop_caches latency is kernel-side, not ours
 
-If you see `drop_caches=3` taking multiple seconds, it's not a ublk
-bug. `drop_caches=3` implicitly calls `sync_filesystems()` first; if
-any dirty pages remain, it blocks until the kernel's writeback has
-drained them. Always `sync -f <mountpoint>` immediately before writing
-to `/proc/sys/vm/drop_caches` and this disappears. `make flushbench`
-confirms per-op gaps in our Go stack are ≤5 ms; seconds-level stalls
-are always the kernel's bdi writeback / jbd2 commit interval.
+`drop_caches=3` **does not** flush dirty pages (contrary to folklore —
+the kernel just drops what's already clean; see `fs/drop_caches.c`).
+If a `drop_caches` call appears to take several seconds, what's
+actually happening is the kernel's **bdi writeback thread** firing on
+its own timer (`/proc/sys/vm/dirty_writeback_centisecs`, default 500
+cs = 5 s) during the same wall-clock window, and the backend sees those
+writes attributed to the `drop_caches` step by a naive benchmark.
+
+The practical fix is to `sync -f <mountpoint>` *before* any call that
+requires a clean filesystem — then `drop_caches` runs in ~150 ms and
+no background writeback interferes.
+
+`make flushbench` empirically confirms: max gap between consecutive
+backend calls while our stack is active is ≤4.3 ms. Seconds-level
+stalls always attribute to kernel writeback timing, not our code.
 
 ### "scanned 6 out of 9 Go files" in CodeQL
 
