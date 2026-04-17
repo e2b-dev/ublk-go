@@ -53,12 +53,12 @@ code. Crossing the default `ulimit -n` surfaces as `ublk.New` returning
 `"too many open files"` or the io_uring setup failing partway through
 `New`, which is very confusing if you don't know to look at it.
 
-Drop-in config files are tracked in [`contrib/`](contrib):
+Drop-in config files are tracked in [`etc/`](etc):
 
 ```bash
 # Raise the kernel-side limit (ublks_max=4096).
-sudo install -m0644 contrib/ublk.conf              /etc/modprobe.d/
-sudo install -m0644 contrib/97-ublk-device.rules   /etc/udev/rules.d/
+sudo install -m0644 etc/ublk.conf              /etc/modprobe.d/
+sudo install -m0644 etc/97-ublk-device.rules   /etc/udev/rules.d/
 sudo rmmod ublk_drv && sudo modprobe ublk_drv
 sudo udevadm control --reload-rules && sudo udevadm trigger
 

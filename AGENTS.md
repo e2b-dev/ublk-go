@@ -297,13 +297,13 @@ Three knobs to set for any deployment creating more than a handful of
 devices at once (target workload is "a few hundred"):
 
 1. **`ublks_max` (kernel module parameter)** — default 64, raise to
-   4096 via `contrib/ublk.conf` → `/etc/modprobe.d/ublk.conf`. The
+   4096 via `etc/ublk.conf` → `/etc/modprobe.d/ublk.conf`. The
    counter is bumped by every `UBLK_CMD_ADD_DEV` regardless of caller
    privileges (the module description's "unprivileged" wording is
    misleading — the check is global). Hitting it surfaces as `EACCES`.
 
 2. **udev CHANGE-event inotify watching** — default on, turn off via
-   `contrib/97-ublk-device.rules` → `/etc/udev/rules.d/`. Same policy
+   `etc/97-ublk-device.rules` → `/etc/udev/rules.d/`. Same policy
    NBD uses. Safe to skip, wasteful under heavy I/O.
 
 3. **`RLIMIT_NOFILE` on the process using the library** — default
