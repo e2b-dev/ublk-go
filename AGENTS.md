@@ -1,7 +1,8 @@
-# Agent Notes — ublk-go
+# AGENTS.md
 
 Running log of non-obvious things about this codebase for future humans
-and AI agents. Append entries; don't rewrite history. Keep it factual.
+and AI agents working in this repo. Append entries; don't rewrite
+history. Keep it factual. Read this before diving in.
 
 ## How to verify the whole stack autonomously
 
