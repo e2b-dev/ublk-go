@@ -118,6 +118,7 @@ func openBlkDev(t *testing.T, path string, flags int) int {
 }
 
 func TestWritePathEndToEnd(t *testing.T) {
+	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -149,6 +150,7 @@ func TestWritePathEndToEnd(t *testing.T) {
 }
 
 func TestReadPathEndToEnd(t *testing.T) {
+	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
@@ -181,6 +183,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 }
 
 func TestFullDeviceIntegrity(t *testing.T) {
+	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -214,6 +217,7 @@ func TestFullDeviceIntegrity(t *testing.T) {
 }
 
 func TestConcurrentWriters(t *testing.T) {
+	t.Parallel()
 	const size = 16 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	path := dev.BlockDevicePath()
@@ -274,6 +278,7 @@ func TestConcurrentWriters(t *testing.T) {
 }
 
 func TestRepeatedCreateDestroy(t *testing.T) {
+	t.Parallel()
 	canRunIntegration(t)
 
 	for cycle := range 5 {
@@ -302,6 +307,7 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 }
 
 func TestRandomIOVerified(t *testing.T) {
+	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -336,6 +342,7 @@ func TestRandomIOVerified(t *testing.T) {
 }
 
 func TestCloseIdempotent(t *testing.T) {
+	t.Parallel()
 	canRunIntegration(t)
 
 	backend := newMemBackend(2 * 1024 * 1024)
@@ -358,6 +365,7 @@ func TestCloseIdempotent(t *testing.T) {
 }
 
 func TestLastBlock(t *testing.T) {
+	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -379,6 +387,7 @@ func TestLastBlock(t *testing.T) {
 }
 
 func TestOverwrite(t *testing.T) {
+	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -402,6 +411,7 @@ func TestOverwrite(t *testing.T) {
 }
 
 func TestWriteThenReadViaBlockDev(t *testing.T) {
+	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -429,6 +439,7 @@ func TestWriteThenReadViaBlockDev(t *testing.T) {
 }
 
 func TestDeviceSize(t *testing.T) {
+	t.Parallel()
 	const size = 8 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
 
@@ -449,6 +460,7 @@ func TestDeviceSize(t *testing.T) {
 }
 
 func TestSmallestDevice(t *testing.T) {
+	t.Parallel()
 	const size = 512
 	dev, backend := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
@@ -469,6 +481,7 @@ func TestSmallestDevice(t *testing.T) {
 }
 
 func TestReadUnwrittenRegion(t *testing.T) {
+	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
 	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
@@ -486,6 +499,7 @@ func TestReadUnwrittenRegion(t *testing.T) {
 }
 
 func TestBlockDevicePath(t *testing.T) {
+	t.Parallel()
 	canRunIntegration(t)
 
 	backend := newMemBackend(1024 * 1024)
@@ -505,6 +519,7 @@ func TestBlockDevicePath(t *testing.T) {
 }
 
 func TestMultipleDevices(t *testing.T) {
+	t.Parallel()
 	canRunIntegration(t)
 
 	const n = 3
