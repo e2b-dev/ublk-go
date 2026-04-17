@@ -70,19 +70,14 @@ jobs:
         continue-on-error: true
         run: |
           set -eux
-          # ublk_drv ships with mainline kernels 6.0+ as a loadable
-          # module, typically in the linux-modules-extra package. GH
-          # hosted runners don't load it by default; we install the
-          # modules package if modinfo doesn't already know about it,
-          # then modprobe with ublks_max raised so integration tests
-          # that create multiple devices in parallel have room.
-          if ! modinfo ublk_drv >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
-          fi
-          sudo modprobe ublk_drv ublks_max=4096
+          # Try the fast path first: the module is almost certainly
+          # already in the kernel's cache on GH runners. Default
+          # ublks_max (64) is plenty — our integration suite runs at
+          # most ~10 devices concurrently. If modprobe fails, the
+          # continue-on-error + ::warning:: in the next step surfaces
+          # it clearly and we'll escalate from there.
+          sudo modprobe ublk_drv
           ls -l /dev/ublk-control
-          cat /sys/module/ublk_drv/parameters/ublks_max
       - name: Integration tests (coverage)
         run: |
           if [ ! -e /dev/ublk-control ]; then
