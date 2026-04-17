@@ -55,6 +55,12 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: false
+      - name: Build library
+        # Catches compile regressions on both amd64 and arm64 before
+        # we even get to tests. Deliberately excludes example/... —
+        # those are demos / harnesses, golangci-lint already
+        # compile-checks them as part of the lint job.
+        run: go build ./ublk/...
       - name: Unit tests (race + coverage)
         run: |
           mkdir -p coverage
