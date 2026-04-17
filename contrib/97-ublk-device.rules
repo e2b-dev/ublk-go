@@ -1,0 +1,8 @@
+# /etc/udev/rules.d/97-ublk-device.rules
+#
+# Disable udev's inotify watching of CHANGE events on ublk devices.
+# udev by default watches every block device with inotify; under heavy
+# I/O this produces a stream of CHANGE events that no one needs. NBD
+# has used the same "nowatch" rule for years for the same reason.
+ACTION=="add|change", KERNEL=="ublkb*", OPTIONS:="nowatch"
+ACTION=="add|change", KERNEL=="ublkc*", OPTIONS:="nowatch"

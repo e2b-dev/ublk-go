@@ -291,6 +291,31 @@ Bare unit tests alone give ~33% coverage because most of the library
 needs root + ublk_drv loaded to exercise. The integration test binary
 pushes the total near ~80% once both profiles are combined.
 
+## Production / self-hosted-runner setup
+
+Before running integration tests against a real `ublk_drv` in
+production (or on a self-hosted CI runner), install both files from
+[`contrib/`](contrib):
+
+- `contrib/ublk.conf` → `/etc/modprobe.d/ublk.conf`: raises
+  `ublks_max` from the default 64 to 4096. **The default limit covers
+  all devices, privileged or not** (the module description is
+  misleading). Any production workload creating >64 devices — or any
+  test run that leaks devices on SIGKILL — will otherwise hit `EACCES`
+  from `UBLK_CMD_ADD_DEV`.
+- `contrib/97-ublk-device.rules` → `/etc/udev/rules.d/`: stops udev
+  from inotify-watching every ublk device. Same policy NBD has used
+  for years. Skipping this is safe but wasteful under heavy I/O.
+
+Reload both without rebooting:
+
+```bash
+sudo rmmod ublk_drv && sudo modprobe ublk_drv
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Verify: `cat /sys/module/ublk_drv/parameters/ublks_max` should show 4096.
+
 ## CI specifics
 
 - `ubuntu-24.04` runner has Go 1.25.8 preinstalled. The workflow passes

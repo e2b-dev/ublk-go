@@ -34,6 +34,39 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 - `CAP_SYS_ADMIN` (root)
 - `ublk_drv` kernel module loaded (`modprobe ublk_drv`)
 
+## Production setup (recommended for serious use)
+
+By default `ublk_drv` only lets **64 devices** exist system-wide at a
+time — and the counter is bumped on `ADD_DEV` regardless of process
+privileges (the "unprivileged" in the module's own parameter
+description is misleading; the check is global). If you plan to run
+more than a handful of devices, or if you run tests that leak devices
+after crashes, raise the limit at module load.
+
+Also, udev's default policy watches every block device with inotify,
+which is pure overhead for userspace block devices. NBD has long
+recommended disabling it for the same reason.
+
+Drop-in config files are tracked in [`contrib/`](contrib):
+
+```bash
+sudo install -m0644 contrib/ublk.conf              /etc/modprobe.d/
+sudo install -m0644 contrib/97-ublk-device.rules   /etc/udev/rules.d/
+
+sudo rmmod ublk_drv && sudo modprobe ublk_drv
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Verify:
+
+```bash
+cat /sys/module/ublk_drv/parameters/ublks_max   # should print 4096
+```
+
+Theoretical hard ceiling is `UBLK_MINORS = 1 << MINORBITS ≈ 1 M`;
+practical values are whatever your workload needs. Each idle device is
+a small amount of kernel memory and a minor number — cheap.
+
 ## Quick start
 
 ```go
