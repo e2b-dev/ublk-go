@@ -5,12 +5,6 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Coverage profiles are also uploaded as a `coverage` build artifact on
-> every CI run — open any workflow run → Artifacts → download to view
-> `unit.html` / `integration.html` locally. The Codecov badge above
-> will start working as soon as the repo is public (tokenless OIDC
-> upload) or a `CODECOV_TOKEN` secret is added (private repo).
-
 Pure Go library for Linux userspace block devices via the [ublk](https://docs.kernel.org/block/ublk.html) driver and io_uring.
 
 ```
