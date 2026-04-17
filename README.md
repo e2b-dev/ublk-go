@@ -35,6 +35,24 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 - `CAP_SYS_ADMIN` (root)
 - `ublk_drv` kernel module loaded (`modprobe ublk_drv`)
 
+## Install
+
+```bash
+go get github.com/e2b-dev/ublk-go/ublk@latest
+```
+
+Pin to a tagged release once there is one:
+
+```bash
+go get github.com/e2b-dev/ublk-go/ublk@v0.1.0
+```
+
+Import path: `github.com/e2b-dev/ublk-go/ublk`. The only symbols you
+need from day one are `Backend`, `New`, and `(*Device).Path` /
+`(*Device).Close`. The lower-level io_uring wrapper at
+`github.com/e2b-dev/ublk-go/ublk/uring` is intentionally separate —
+most users don't touch it.
+
 ## Production setup (recommended for serious use)
 
 Three limits to raise for any non-trivial deployment. With the defaults
