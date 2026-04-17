@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Pre-commit hook: fast, read-only checks on staged Go files.
+#
+# Enable once per clone:  make hooks
+# Bypass (emergencies):   git commit --no-verify
+
+set -euo pipefail
+
+staged_go=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+
+if [ -n "$staged_go" ]; then
+	bad=$(echo "$staged_go" | xargs gofmt -l)
+	if [ -n "$bad" ]; then
+		echo "gofmt: the following files need formatting:" >&2
+		echo "$bad" >&2
+		echo "run: make fmt" >&2
+		exit 1
+	fi
+	go vet ./...
+fi
+
+if git diff --cached --name-only | grep -qE '^(go\.mod|go\.sum)$'; then
+	go mod tidy -diff
+fi

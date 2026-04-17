@@ -53,11 +53,14 @@ func (w *worker) init() error {
 
 // run submits FETCH_REQ from a locked OS thread (required by ublk kernel
 // protocol), signals ready, then enters the IO event loop.
+//
+// The ring and mmap'd descriptors are not released here; Device.shutdown
+// does so after wg.Wait, which establishes the happens-before needed to
+// keep these accesses race-free.
 func (w *worker) run(ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer w.dev.wg.Done()
-	defer w.cleanup()
 
 	_, err := w.ioRing.SubmitAndWait()
 	if err != nil {
@@ -212,6 +215,9 @@ func (w *worker) getDesc(tag uint16) ioDesc {
 	return *(*ioDesc)(unsafe.Pointer(&w.ioDescs[off]))
 }
 
+// cleanup releases resources owned by the worker. It must not be called
+// concurrently with run: either before run starts (on init failure) or
+// after run has returned (via Device.shutdown's wg.Wait).
 func (w *worker) cleanup() {
 	if w.ioDescs != nil {
 		_ = unix.Munmap(w.ioDescs)

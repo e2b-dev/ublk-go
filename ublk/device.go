@@ -197,22 +197,24 @@ func (d *Device) Close() (retErr error) {
 }
 
 func (d *Device) shutdown() error {
-	// Closing the char fd triggers ublk_ch_release in the kernel.
+	// Wake workers blocked in WaitCQE via eventfd so they exit run().
+	// wg.Wait establishes happens-before with worker goroutines, after
+	// which their ring state can be released without data races.
+	for _, w := range d.workers {
+		w.ioRing.Cancel()
+	}
+	d.wg.Wait()
+	for _, w := range d.workers {
+		w.cleanup()
+	}
+
+	// With workers gone, close char fd to trigger the kernel's
+	// ublk_ch_release, which aborts any pending ublk_io state so delDev()
+	// doesn't block waiting for in-flight I/Os.
 	if d.charFD >= 0 {
 		_ = unix.Close(d.charFD)
 		d.charFD = -1
 	}
-
-	// Close worker ring fds to force WaitCQE to return immediately.
-	// The kernel's async release work may not have run yet, so we can't
-	// rely solely on -ENODEV CQEs to unblock workers.
-	for _, w := range d.workers {
-		if w.ioRing != nil {
-			w.ioRing.Cancel()
-		}
-	}
-
-	d.wg.Wait()
 
 	_ = d.stopDev()
 	var err error
