@@ -153,6 +153,16 @@ Plain `sync(1)` syncs every mount on the host, so it can look "stuck"
 for a long time on a busy system even when nothing in ublk is wrong.
 Always prefer `sync -f`.
 
+### drop_caches latency is kernel-side, not ours
+
+If you see `drop_caches=3` taking multiple seconds, it's not a ublk
+bug. `drop_caches=3` implicitly calls `sync_filesystems()` first; if
+any dirty pages remain, it blocks until the kernel's writeback has
+drained them. Always `sync -f <mountpoint>` immediately before writing
+to `/proc/sys/vm/drop_caches` and this disappears. `make flushbench`
+confirms per-op gaps in our Go stack are ≤5 ms; seconds-level stalls
+are always the kernel's bdi writeback / jbd2 commit interval.
+
 ### "scanned 6 out of 9 Go files" in CodeQL
 
 CodeQL extractor only scans files with default build tags. The 3 it
