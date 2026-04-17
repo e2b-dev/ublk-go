@@ -6,6 +6,7 @@ import (
 )
 
 func TestStructSizes(t *testing.T) {
+	t.Parallel()
 	if unsafe.Sizeof(SQE128{}) != 128 {
 		t.Fatalf("SQE128 is %d bytes, want 128", unsafe.Sizeof(SQE128{}))
 	}
@@ -24,6 +25,7 @@ func TestStructSizes(t *testing.T) {
 }
 
 func TestNOPRoundTrip(t *testing.T) {
+	t.Parallel()
 	r, err := New(16)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -68,6 +70,7 @@ func TestNOPRoundTrip(t *testing.T) {
 }
 
 func TestManyCycles(t *testing.T) {
+	t.Parallel()
 	r, err := New(4)
 	if err != nil {
 		t.Fatalf("New: %v", err)

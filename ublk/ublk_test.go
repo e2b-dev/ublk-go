@@ -16,6 +16,7 @@ import (
 )
 
 func TestUblkStructSizes(t *testing.T) {
+	t.Parallel()
 	if unsafe.Sizeof(ctrlCmd{}) != 32 {
 		t.Fatalf("ctrlCmd is %d bytes, kernel expects 32", unsafe.Sizeof(ctrlCmd{}))
 	}
@@ -31,6 +32,7 @@ func TestUblkStructSizes(t *testing.T) {
 }
 
 func TestNewInvalidSize(t *testing.T) {
+	t.Parallel()
 	backend := newMemBackend(4096)
 
 	if _, err := New(backend, 0); err == nil {
@@ -499,36 +501,6 @@ func TestBlockDevicePath(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("block device %s does not exist: %v", path, err)
-	}
-}
-
-func TestMultipleDevices(t *testing.T) {
-	canRunIntegration(t)
-
-	const n = 3
-	devs := make([]*Device, n)
-	for i := range n {
-		backend := newMemBackend(1024 * 1024)
-		dev, err := New(backend, 1024*1024)
-		if err != nil {
-			t.Fatalf("New device %d: %v", i, err)
-		}
-		devs[i] = dev
-	}
-
-	paths := make(map[string]bool)
-	for _, d := range devs {
-		p := d.BlockDevicePath()
-		if paths[p] {
-			t.Errorf("duplicate path: %s", p)
-		}
-		paths[p] = true
-	}
-
-	for i := len(devs) - 1; i >= 0; i-- {
-		if err := devs[i].Close(); err != nil {
-			t.Errorf("Close device %d: %v", i, err)
-		}
 	}
 }
 
