@@ -203,6 +203,15 @@ func (r *Ring) mmapRings() error {
 // SQEntries returns the SQ size.
 func (r *Ring) SQEntries() uint32 { return r.sqEntries }
 
+// Cancel closes the ring fd, forcing any blocked WaitCQE to return with an error.
+// The ring must still be fully closed with Close() afterwards.
+func (r *Ring) Cancel() {
+	if r.fd >= 0 {
+		_ = unix.Close(r.fd)
+		r.fd = -1
+	}
+}
+
 // Close releases all ring resources.
 func (r *Ring) Close() error {
 	var errs []error
