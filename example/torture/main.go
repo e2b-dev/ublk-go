@@ -22,6 +22,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"flag"
@@ -29,8 +30,10 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -133,13 +136,19 @@ func runTorture(duration time.Duration, parallel int) error {
 		}
 	}
 
+	// Respect Ctrl+C so the deferred dev.Close() runs and cleans up
+	// the device instead of leaking it.
+	ctx, stopSignals := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+
 	deadline := time.Now().Add(duration)
 	var wg sync.WaitGroup
 	for _, r := range regions {
 		wg.Add(1)
 		go func(r *region) {
 			defer wg.Done()
-			r.loop(deadline)
+			r.loop(ctx, deadline)
 		}(r)
 	}
 
@@ -184,9 +193,9 @@ func logProgress(rs []*region) {
 }
 
 // loop is the core random-IO driver for one region.
-func (r *region) loop(deadline time.Time) {
+func (r *region) loop(ctx context.Context, deadline time.Time) {
 	for time.Now().Before(deadline) {
-		if r.err != nil {
+		if r.err != nil || ctx.Err() != nil {
 			return
 		}
 		it := r.iters.Add(1)

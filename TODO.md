@@ -2,47 +2,48 @@
 
 Features and optimizations to add on top of the current minimal implementation.
 
-## Known kernel issues — NOT ublk-go bugs, but worth tracking
+## Ungraceful-exit device leaks
 
-### Kernel 6.17 ublk_drv leaks devices after SIGKILL
+When our test harnesses (or any user program using the library) is
+**terminated without running `Device.Close()`**, `/dev/ublkbN` and
+`/dev/ublkcN` nodes accumulate on the system. The clean-shutdown path
+— i.e. `Device.Close()` actually being called — works correctly: we
+verified this with 152 consecutive stress-churn iterations, every
+probe run, and every torture run. Zero leaks when Close runs.
 
-**Observed on Ubuntu 25.10, kernel 6.17.0-7-generic (also 6.17.0-14 per
-upstream reports).** When a process holding a ublk device is killed
-(`SIGKILL`, or crashes mid-I/O), the kernel's `ublk_ch_release`
-workqueue does not reliably complete. Symptoms:
+Leaks happen when:
 
-- `/dev/ublkbN` and `/dev/ublkcN` nodes persist (observed ≥ 30 s, likely
-  until reboot).
-- Processes that had in-flight I/O on the device end up in uninterruptible
-  sleep (`D` state) and stay there.
-- `lsmod` shows ublk_drv refcount growing over a session, never dropping.
-- `/sys/module/ublk_drv/parameters/ublks_max` defaults to 64, so after
-  enough killed processes `ublk.New()` will start failing with ENOSPC
-  until reboot.
+1. **`SIGKILL`** on the process (our `sigkill` test intentionally does
+   this — the scenario is "what if your process crashes mid-I/O").
+2. **`Ctrl+C`** on a harness binary that doesn't trap `SIGINT`. Go's
+   default signal handler terminates immediately without running
+   `defer`s, so `dev.Close()` is never invoked.
+3. **`kill -9`** from elsewhere.
 
-Context: ublk_drv was substantially refactored in September 2025
-(commits 25c028aa7915, 97e8ba31b8f1, 225dc96f35af, b749965edda8 et al).
-Multiple regressions have been fixed in 6.18 stable. The specific
-cleanup path we observe hanging has not (as of 6.17.7) been tracked to
-a specific upstream report we could find.
-
-**What ublk-go does about it:** nothing. There's nothing userspace can
-do once the kernel has wedged. `Device.Close` works fine for normal
-shutdown. Ungraceful kills leave state only the kernel can reclaim.
+In all three cases the kernel must tear the device down on its own
+via `ublk_ch_release` (triggered by fd close on process exit). On
+kernel 6.17.0 (Ubuntu 25.10) that async path can wedge processes in
+`D` state indefinitely, leaving device nodes behind. We haven't traced
+this to a specific kernel commit — ublk_drv was heavily refactored in
+Sept 2025 (commits 25c028aa7915, 97e8ba31b8f1, 225dc96f35af,
+b749965edda8), multiple regressions fixed in 6.18. The ungraceful-exit
+cleanup path may or may not be among them.
 
 **What we should do next:**
 
-- [ ] Repro the hang in a minimal way (smaller than our stress suite),
-  enough to post a bug report to `linux-block@vger.kernel.org` /
-  Ming Lei. A simple Go program doing `SIGKILL` on a self-spawned
-  child running `ublk.New` + a Pwrite loop should suffice.
-- [ ] Track upstream fixes for ublk in 6.18 / 6.19 stable trees; when
-  a specific commit lands that changes `ublk_ch_release`, re-run
-  `make sigkill` on the new kernel and update AGENTS.md.
-- [ ] Consider making the library log a warning if it detects
-  `/sys/class/ublk-char/` already has N devices where N approaches
-  `ublks_max` — would give users actionable signal before `New()`
-  starts failing silently.
+- [x] Make our long-running harnesses (stress, torture, flushbench)
+  trap `SIGINT` / `SIGTERM` and run `Device.Close()` on exit. This
+  eliminates the 95% case (Ctrl+C during a session).
+- [ ] Confirm on a fresh reboot that running the full test matrix
+  without any interruption leaves zero stale devices. That would
+  pin the remaining leak budget to "only SIGKILL", which is the
+  one we can't do anything about from userspace.
+- [ ] If the remaining "SIGKILL → orphan device" symptoms persist on
+  newer kernels (6.18+), produce a minimal repro and post to
+  `linux-block@vger.kernel.org` / Ming Lei.
+- [ ] Optionally: warn in `ublk.New` if `/sys/class/ublk-char/` is
+  approaching `ublks_max` (default 64). Gives users a signal before
+  `New()` starts failing silently due to accumulated orphans.
 
 ## Build
 

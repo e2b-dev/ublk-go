@@ -150,24 +150,31 @@ when the refcount drops. The async variant is a better default but
 changes Close's semantics (it no longer guarantees the node is gone
 on return). Not implemented; worth considering if users hit this.
 
-Same caveat applies to SIGKILL'd processes — the ublk_ch_release
-workqueue is async and on kernel 6.17 appears to **not complete at
-all** in many cases: stale `/dev/ublkbN` / `/dev/ublkcN` device nodes
-linger indefinitely (or at least far longer than any reasonable test
-timeout) after the process exits. This is almost certainly a
-kernel-side issue unrelated to ublk-go.
+**Clean Close always works.** What leaves orphan device nodes is
+**ungraceful termination** where `Device.Close()` is never called:
+
+- **Ctrl+C on a harness that doesn't trap SIGINT**: Go's default
+  handler exits without running `defer`s. The long-running harnesses
+  (`stress`, `torture`, `flushbench`) now trap SIGINT/SIGTERM and
+  return cleanly, so `defer dev.Close()` runs. Short-running ones
+  (`probe`, `chain`, `fault`) don't need it — they're too fast to
+  matter in practice.
+- **SIGKILL or crash**: deliberately tested by `make sigkill`. The
+  kernel must clean up on its own via `ublk_ch_release` on fd close.
+  On kernel 6.17.0 that path can wedge processes in `D` state,
+  leaving orphan nodes until reboot. **Unknown whether a specific
+  upstream fix exists**; ublk was heavily refactored Sept 2025 and
+  6.18 stable has multiple fixes. TODO.md tracks.
 
 The library-correctness question "can we keep using the API after an
 ungraceful kill" is distinct from and answerable: `make sigkill`
-checks this by attempting `ublk.New` in the parent after the child is
-SIGKILL'd. That succeeds — the kernel allocates new minor numbers
-independently of whether the old ones have been reclaimed. So even
-with leaked orphan device nodes, the parent process is unaffected,
-**until the kernel's `ublks_max` limit (default 64) is hit**.
+verifies that attempting `ublk.New` in the parent after the child is
+SIGKILL'd succeeds (observed: 11 ms on kernel 6.17.0). The kernel
+allocates new minor numbers independently of whether old ones have
+been reclaimed, **until the `ublks_max` limit (default 64) is hit**.
 
-If you run tests enough times you'll accumulate a lot of stale ublkb*
-nodes. Reboot to clean them up (no manual fix known that works
-reliably).
+If you accumulate stale nodes, **reboot** — no userspace cleanup
+works reliably.
 
 ### Diagnostic commands when investigating this
 

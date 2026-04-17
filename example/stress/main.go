@@ -43,8 +43,10 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -117,10 +119,21 @@ func main() {
 	log.Printf("stress plan: %d modes x %v each, %d workers, %d parallel devices",
 		len(stressors), perMode, *workers, *parallel)
 
+	// Trap Ctrl+C so every in-flight stressor gets a chance to close
+	// its devices cleanly before we exit. Without this, Ctrl+C mid-run
+	// leaves orphan /dev/ublk[bc]N nodes behind.
+	rootCtx, stopSignals := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+
 	var summaries []summary
 	for _, s := range stressors {
+		if rootCtx.Err() != nil {
+			log.Printf("=== %s skipped (interrupted)", s.name)
+			continue
+		}
 		log.Printf("=== %s (budget %v)", s.name, perMode)
-		ctx, cancel := context.WithTimeout(context.Background(), perMode)
+		ctx, cancel := context.WithTimeout(rootCtx, perMode)
 		n := *workers
 		if s.name == "many" {
 			n = *parallel
