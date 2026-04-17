@@ -4,8 +4,9 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
+
+	"github.com/e2b-dev/ublk-go/ublk/uring"
 )
 
 type worker struct {

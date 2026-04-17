@@ -115,6 +115,13 @@ make fmt               # format code and tidy go.mod
 make hooks             # install the repo's pre-commit hook (optional)
 ```
 
+Integration tests live behind `//go:build integration`. If your editor / gopls
+hides `ublk_integration_test.go`, tell the Go toolchain about the tag once:
+
+```bash
+go env -w GOFLAGS=-tags=integration
+```
+
 ## Future work
 
 See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned devices, etc.).

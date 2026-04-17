@@ -184,7 +184,7 @@ func TestConcurrentWriters(t *testing.T) {
 				}
 				off := base + int64(i)*blk
 				if n, err := unix.Pwrite(fd, buf, off); err != nil || n != blk {
-					errs <- fmt.Errorf("worker %d write at %d: n=%d err=%v", id, off, n, err)
+					errs <- fmt.Errorf("worker %d write at %d: n=%d err=%w", id, off, n, err)
 					return
 				}
 			}

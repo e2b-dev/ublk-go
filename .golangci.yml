@@ -7,19 +7,35 @@ run:
 formatters:
   enable:
     - gofumpt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
 
 linters:
   default: none
   enable:
-    - errcheck
-    - gocritic
-    - govet
-    - ineffassign
-    - revive
-    - staticcheck
-    - unconvert
-    - unparam
-    - unused
+    - bidichk          # Unicode bidi exploits in source
+    - copyloopvar      # Go 1.22+ loop-var gotcha catcher
+    - errcheck         # unchecked errors
+    - errorlint        # errors.Is/As, %w in fmt.Errorf
+    - gocritic         # opinionated style pack
+    - govet            # stdlib vet suite
+    - ineffassign      # assignments that are never read
+    - misspell         # typos in comments and strings
+    - nolintlint       # //nolint directives must be well-formed
+    - predeclared      # shadowing of builtins
+    - revive           # fast golint replacement
+    - staticcheck      # correctness + simplification
+    - tparallel        # t.Parallel() correctness
+    - unconvert        # redundant type conversions
+    - unparam          # unused function parameters
+    - unused           # dead code
+    - wastedassign     # assignments overwritten before use
+    - whitespace       # leading/trailing blank lines in funcs
 
   exclusions:
     rules:
@@ -27,4 +43,3 @@ linters:
         linters: [errcheck]
       - path: "example/"
         linters: [errcheck]
-

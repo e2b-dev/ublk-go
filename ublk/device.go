@@ -8,8 +8,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
+
+	"github.com/e2b-dev/ublk-go/ublk/uring"
 )
 
 // Device is a ublk block device.
