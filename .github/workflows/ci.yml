@@ -38,7 +38,6 @@ jobs:
       - name: Unit tests
         run: go test -v -count=1 -race ./ublk/uring/ ./ublk/
       - name: Integration tests
-        if: matrix.arch == 'amd64'
         run: |
           sudo modprobe ublk_drv 2>/dev/null || true
           if [ -e /dev/ublk-control ]; then
