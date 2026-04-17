@@ -12,6 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ErrCancelled is returned by WaitCQE when Cancel has been called.
+var ErrCancelled = errors.New("uring: cancelled")
+
 // io_uring constants.
 const (
 	OpUringCmd = 46
@@ -352,6 +355,7 @@ func (r *Ring) SubmitAndWait() (int, error) {
 }
 
 // WaitCQE blocks until a CQE is available or the ring is cancelled.
+// Returns ErrCancelled if Cancel was called.
 func (r *Ring) WaitCQE() (*CQE, error) {
 	var events [2]unix.EpollEvent
 	for {
@@ -363,12 +367,15 @@ func (r *Ring) WaitCQE() (*CQE, error) {
 		}
 
 		n, err := unix.EpollWait(r.epollFD, events[:], -1)
-		if err != nil && err != unix.EINTR {
+		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
 			return nil, fmt.Errorf("epoll_wait: %w", err)
 		}
 		for i := 0; i < n; i++ {
 			if events[i].Fd == int32(r.cancelFD) {
-				return nil, fmt.Errorf("ring cancelled")
+				return nil, ErrCancelled
 			}
 		}
 	}
