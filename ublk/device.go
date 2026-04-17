@@ -190,6 +190,17 @@ func (d *Device) BlockDevicePath() string {
 }
 
 // Close stops and removes the ublk device, releasing all resources.
+//
+// The caller MUST close every fd they've opened to the block device
+// (the path returned by [Device.BlockDevicePath]) before calling
+// Close. Close internally issues UBLK_CMD_DEL_DEV which is backed by
+// the kernel's del_gendisk, and del_gendisk blocks until every fd on
+// the block device has been released. A leaked fd makes Close hang
+// forever. Mounted filesystems must be unmounted first, for the same
+// reason.
+//
+// Close is safe to call multiple times; only the first invocation
+// does real work.
 func (d *Device) Close() (retErr error) {
 	d.closeOnce.Do(func() {
 		retErr = d.shutdown()

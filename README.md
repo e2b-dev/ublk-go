@@ -84,9 +84,12 @@ For an end-to-end demo that formats, mounts, writes a file, and prints backend I
 ## API
 
 ```go
+// Backend is the storage backing the block device. It embeds io.ReaderAt
+// and io.WriterAt; their standard concurrency contract (disjoint ranges
+// are safe) applies here.
 type Backend interface {
-    ReadAt(p []byte, off int64) (n int, err error)
-    WriteAt(p []byte, off int64) (n int, err error)
+    io.ReaderAt
+    io.WriterAt
 }
 
 func New(backend Backend, size uint64) (*Device, error)
@@ -94,7 +97,37 @@ func (*Device) BlockDevicePath() string
 func (*Device) Close() error
 ```
 
-`size` must be a positive multiple of 512. The block device uses 512-byte logical blocks, 128KB max IO, and a single queue with depth 128.
+`size` must be a positive multiple of 512. The block device uses
+512-byte logical blocks, 128KB max IO, and a single queue with depth 128.
+
+### Closing a device
+
+**Close any fd you've opened to `/dev/ublkbN` before calling
+`Device.Close()`.** `Close()` internally issues `UBLK_CMD_DEL_DEV`,
+which is backed by the kernel's `del_gendisk()` — and that blocks
+until every open fd on the block device has been released. This is
+standard Linux block-device teardown, not a ublk quirk, but it means
+the following deadlocks:
+
+```go
+fd, _ := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+// ... some work ...
+dev.Close()        // ← hangs forever; del_gendisk waits for `fd`
+unix.Close(fd)     // never reached
+```
+
+Correct order:
+
+```go
+fd, _ := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+// ... some work ...
+unix.Close(fd)     // release the block device first
+dev.Close()        // now Close can proceed
+```
+
+If you have many fds spread across goroutines, close them all before
+calling `Device.Close()`. A running mount also counts; unmount before
+closing the device.
 
 ## Architecture
 
