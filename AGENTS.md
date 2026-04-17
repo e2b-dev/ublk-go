@@ -267,17 +267,29 @@ not refactor the order without rerunning `make test-integration` under
 `make cover` produces `coverage/unit.out` + `coverage/integration.out`.
 `make cover-html` opens the integration profile in a browser.
 
-CI (`.github/workflows/ci.yml`, `test` job on amd64) uploads both
-profiles to Codecov via `codecov/codecov-action@v5.5.4`. For a public
-repo the upload is tokenless — it uses GitHub OIDC, which is why the
-`test` job carries `permissions: id-token: write`. If the badge stops
-updating, check that permission and the Codecov integration on the
-repo's settings page; everything else is automatic.
+CI (`.github/workflows/ci.yml`, `test` job on amd64) publishes
+coverage three ways:
 
-Bare unit tests alone give ~25% coverage because most of the library
+1. **GitHub Actions step summary** — `## Coverage` block at the top of
+   the run page, visible without any download. Shows the unit and
+   integration totals.
+2. **`coverage` build artifact** — the `.out` profiles and rendered
+   `.html` reports are uploaded via `actions/upload-artifact@v7.0.1`
+   (30-day retention). Every run page has them under "Artifacts";
+   download and open the HTML files locally.
+3. **Codecov** (`codecov/codecov-action@v5.5.4`) — best-effort. Works
+   automatically on public repos via OIDC (no token). For private
+   repos, add a `CODECOV_TOKEN` secret from codecov.io and it starts
+   working. If the upload fails CI does not fail (`fail_ci_if_error:
+   false`).
+
+So the Codecov badge in the README will be red/"unknown" on a private
+repo with no token; that's expected. The artifact + step summary are
+the reliable sources while the repo isn't public.
+
+Bare unit tests alone give ~33% coverage because most of the library
 needs root + ublk_drv loaded to exercise. The integration test binary
-pushes the total near ~80% once merged with the unit profile on
-Codecov's side.
+pushes the total near ~80% once both profiles are combined.
 
 ## CI specifics
 

@@ -70,6 +70,41 @@ jobs:
             echo "ublk_drv not available, skipping integration tests"
             : > coverage/integration.out
           fi
+      - name: Coverage summary
+        if: matrix.arch == 'amd64'
+        run: |
+          {
+            echo "## Coverage"
+            echo ""
+            echo '```'
+            echo -n 'unit        '; go tool cover -func=coverage/unit.out        | tail -1
+            if [ -s coverage/integration.out ]; then
+              echo -n 'integration '; go tool cover -func=coverage/integration.out | tail -1
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "---"
+          go tool cover -func=coverage/unit.out | tail -1
+          if [ -s coverage/integration.out ]; then
+            go tool cover -func=coverage/integration.out | tail -1
+          fi
+      - name: Render HTML coverage reports
+        if: matrix.arch == 'amd64'
+        run: |
+          go tool cover -html=coverage/unit.out -o coverage/unit.html
+          if [ -s coverage/integration.out ]; then
+            go tool cover -html=coverage/integration.out -o coverage/integration.html
+          fi
+      - name: Upload coverage artifact (downloadable from the run page)
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 30
+      # Codecov upload is best-effort. Works automatically for public
+      # repos (OIDC tokenless). For private repos, set CODECOV_TOKEN
+      # and it picks up. Failure here doesn't break CI.
       - name: Upload coverage to Codecov
         if: matrix.arch == 'amd64'
         uses: codecov/codecov-action@v5.5.4
@@ -77,3 +112,4 @@ jobs:
           files: coverage/unit.out,coverage/integration.out
           fail_ci_if_error: false
           disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
