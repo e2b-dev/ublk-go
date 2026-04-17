@@ -11,6 +11,8 @@ make probe           # sudo needed; per-step timeouts; exits non-zero on hang
 make chain           # sudo needed; stacks two ublks (proxy -> storage)
 make stress          # sudo needed; race-detector stress (create/close churn, IO-while-close, etc.)
 make torture         # sudo needed; randomised I/O with shadow-buffer verification (fuzz-style)
+make fault           # sudo needed; Backend returns EIO; verifies errors propagate to userspace
+make sigkill         # sudo needed; child process killed mid-I/O; verifies kernel cleanup
 make flushbench      # sudo needed; microsecond trace of backend calls during flush operations
 ```
 
@@ -50,6 +52,21 @@ the shadow and fails the run (non-zero exit, with first-differing byte
 offset) on any mismatch. Periodic `fsync` and full-region reverify runs
 exercise the write-through and journaling paths. Run for minutes, not
 seconds, to find subtle ordering bugs.
+
+`make fault` (`example/fault/main.go`) injects backend errors at a
+configurable rate and checks they propagate all the way up to
+`Pwrite`/`Pread` on `/dev/ublkbN`. The scenarios cover low-rate
+failures (10%), total write/read failure (100%), and the
+often-forgotten "Close() with pending errors" case — which must not
+hang.
+
+`make sigkill` (`example/sigkill/main.go`) spawns a child process,
+kills it with SIGKILL mid-I/O, and verifies the kernel's own cleanup
+path (ublk_ch_release on fd close) is sufficient to remove the device
+nodes and free whatever state the kernel holds. The parent then
+creates a fresh device to confirm no leak. Matters because SIGKILL
+bypasses every Go-level cleanup (defer, sync.Once, etc.) — the kernel
+is the only thing protecting us.
 
 `make stress` (`example/stress/main.go`) runs four stressors against
 `-race`-instrumented library code:

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration cover cover-html probe chain flushbench flushbench-race stress torture build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration cover cover-html probe chain flushbench flushbench-race stress torture fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -64,6 +64,19 @@ stress:
 torture:
 	go build -race -o /tmp/ublk-torture ./example/torture
 	sudo /tmp/ublk-torture -duration 30s -parallel 4
+
+# Fault injection: Backend returns EIO on a configurable fraction of
+# operations. Verifies errors propagate to userspace and Close still
+# completes when the device is in an unhappy state.
+fault:
+	go build -race -o /tmp/ublk-fault ./example/fault
+	sudo /tmp/ublk-fault
+
+# SIGKILL recovery: spawn a child, kill -9 it mid-I/O, verify the
+# kernel cleans up and the parent can create a fresh device afterwards.
+sigkill:
+	go build -race -o /tmp/ublk-sigkill ./example/sigkill
+	sudo /tmp/ublk-sigkill
 
 build:
 	go build ./...

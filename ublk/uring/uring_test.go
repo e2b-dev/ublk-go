@@ -1,7 +1,9 @@
 package uring
 
 import (
+	"errors"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -66,6 +68,99 @@ func TestNOPRoundTrip(t *testing.T) {
 		if !seen[i] {
 			t.Errorf("missing CQE for UserData=%d", i)
 		}
+	}
+}
+
+func TestNewSQE128(t *testing.T) {
+	t.Parallel()
+	r, err := NewSQE128(8)
+	if err != nil {
+		t.Fatalf("NewSQE128: %v", err)
+	}
+	defer r.Close()
+
+	sqe := r.GetSQE128()
+	if sqe == nil {
+		t.Fatal("GetSQE128 returned nil from a fresh ring")
+	}
+
+	// All 8 slots must be available, then the 9th should return nil.
+	// We've already taken one, so 7 more succeed, then the 8th fails.
+	for i := range 7 {
+		if r.GetSQE128() == nil {
+			t.Fatalf("GetSQE128 returned nil at i=%d; ring should have 7 more slots", i)
+		}
+	}
+	if r.GetSQE128() != nil {
+		t.Fatal("GetSQE128 returned non-nil after filling all 8 slots")
+	}
+}
+
+func TestCancelUnblocksWaitCQE(t *testing.T) {
+	t.Parallel()
+	r, err := New(4)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.WaitCQE()
+		done <- err
+	}()
+
+	// Give WaitCQE time to enter epoll_wait.
+	time.Sleep(10 * time.Millisecond)
+	r.Cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrCancelled) {
+			t.Fatalf("WaitCQE after Cancel: got %v, want ErrCancelled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitCQE did not unblock within 1s after Cancel")
+	}
+}
+
+func TestPeekCQE(t *testing.T) {
+	t.Parallel()
+	r, err := New(4)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	// Nothing submitted yet — PeekCQE must return nil.
+	if c := r.PeekCQE(); c != nil {
+		t.Fatalf("PeekCQE on empty ring returned %+v, want nil", c)
+	}
+
+	// Submit one NOP and SubmitAndWait — covers both SubmitAndWait
+	// and the populated PeekCQE branch.
+	sqe := r.GetSQE64()
+	if sqe == nil {
+		t.Fatal("GetSQE64 nil on fresh ring")
+	}
+	sqe.Opcode = 0
+	sqe.UserData = 0xDEADBEEF
+	if _, err := r.SubmitAndWait(); err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+
+	c := r.PeekCQE()
+	if c == nil {
+		t.Fatal("PeekCQE after SubmitAndWait returned nil, want a CQE")
+	}
+	if c.UserData != 0xDEADBEEF {
+		t.Fatalf("PeekCQE CQE.UserData = %#x, want 0xDEADBEEF", c.UserData)
+	}
+	r.SeenCQE()
+
+	// After draining the CQE, PeekCQE must again return nil.
+	if c := r.PeekCQE(); c != nil {
+		t.Fatalf("PeekCQE after drain returned %+v, want nil", c)
 	}
 }
 
