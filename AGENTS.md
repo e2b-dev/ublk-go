@@ -267,21 +267,27 @@ not refactor the order without rerunning `make test-integration` under
 `make cover` produces `coverage/unit.out` + `coverage/integration.out`.
 `make cover-html` opens the integration profile in a browser.
 
-CI (`.github/workflows/ci.yml`, `test` job on amd64) publishes
-coverage three ways:
+CI splits coverage collection across three jobs:
 
-1. **GitHub Actions step summary** — `## Coverage` block at the top of
-   the run page, visible without any download. Shows the unit and
-   integration totals.
-2. **`coverage` build artifact** — the `.out` profiles and rendered
-   `.html` reports are uploaded via `actions/upload-artifact@v7.0.1`
-   (30-day retention). Every run page has them under "Artifacts";
-   download and open the HTML files locally.
-3. **Codecov** (`codecov/codecov-action@v5.5.4`) — best-effort. Works
-   automatically on public repos via OIDC (no token). For private
-   repos, add a `CODECOV_TOKEN` secret from codecov.io and it starts
-   working. If the upload fails CI does not fail (`fail_ci_if_error:
-   false`).
+- `test-unit` (amd64+arm64): runs unit tests, uploads `unit.out` and
+  `unit.html` as the `coverage-unit` artifact. amd64 variant flags it
+  to Codecov as `unit`.
+- `test-integration` (amd64+arm64): runs integration tests, uploads
+  `integration.out` and `integration.html` as `coverage-integration`.
+  amd64 flags to Codecov as `integration`.
+- `coverage` (amd64 only, `needs: [test-unit, test-integration]`):
+  downloads both artifacts, merges them with `gocovmerge`, uploads
+  `combined.out`/`combined.html` as `coverage-combined`, flags to
+  Codecov as `combined`.
+
+Every run page therefore has **three separate artifact bundles** plus
+a `## Combined coverage` block in the step summary showing the merged
+number. Codecov shows per-flag + merged automatically.
+
+On a private repo without `CODECOV_TOKEN` the Codecov uploads 403 but
+don't fail CI (`fail_ci_if_error: false`). The artifacts are still
+there — download and open `combined.html` locally. Once the repo is
+public (tokenless OIDC) or the token is set, Codecov flips on.
 
 So the Codecov badge in the README will be red/"unknown" on a private
 repo with no token; that's expected. The artifact + step summary are

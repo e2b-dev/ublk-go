@@ -173,3 +173,57 @@ jobs:
           fail_ci_if_error: false
           disable_search: true
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  coverage:
+    name: Combined coverage
+    needs: [test-unit, test-integration]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-go@v5.6.0
+        with:
+          go-version: "1.25"
+          check-latest: false
+      - name: Download unit + integration coverage artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+      - name: Merge coverage profiles
+        # gocovmerge sums counts for overlapping line ranges across
+        # profiles (concatenating atomic-mode files directly would
+        # double-count shared lines).
+        run: |
+          set -eu
+          go install github.com/wadey/gocovmerge@latest
+          "$(go env GOPATH)/bin/gocovmerge" coverage/unit.out coverage/integration.out > coverage/combined.out
+          go tool cover -html=coverage/combined.out -o coverage/combined.html
+      - name: Combined coverage summary
+        run: |
+          set -eu
+          {
+            echo "## Combined coverage (unit + integration merged)"
+            echo ""
+            echo '```'
+            go tool cover -func=coverage/combined.out | tail -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage/combined.out | tail -1
+      - name: Upload combined coverage artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-combined
+          path: coverage/combined.*
+          retention-days: 30
+      - name: Upload combined coverage to Codecov
+        uses: codecov/codecov-action@v5.5.4
+        with:
+          files: coverage/combined.out
+          flags: combined
+          fail_ci_if_error: false
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}

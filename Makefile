@@ -9,22 +9,26 @@ test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=300s
 
-# Produce coverage profiles (unit + integration) under ./coverage/.
+# Produce coverage profiles (unit + integration + combined) under ./coverage/.
 cover:
 	mkdir -p coverage
 	go test -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
 	go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
-	sudo /tmp/ublk.test -test.v -test.timeout=120s -test.coverprofile=coverage/integration.out
+	sudo /tmp/ublk.test -test.v -test.timeout=300s -test.coverprofile=coverage/integration.out
 	sudo chmod 644 coverage/integration.out
+	go install github.com/wadey/gocovmerge@latest
+	"$$(go env GOPATH)/bin/gocovmerge" coverage/unit.out coverage/integration.out > coverage/combined.out
 	@echo
-	@echo "=== unit        coverage ==="
+	@echo "=== unit ==="
 	@go tool cover -func=coverage/unit.out | tail -1
-	@echo "=== integration coverage ==="
+	@echo "=== integration ==="
 	@go tool cover -func=coverage/integration.out | tail -1
+	@echo "=== combined (unit + integration) ==="
+	@go tool cover -func=coverage/combined.out | tail -1
 
-# Render the integration coverage profile as HTML in your browser.
+# Render the combined coverage profile as HTML in your browser.
 cover-html: cover
-	go tool cover -html=coverage/integration.out
+	go tool cover -html=coverage/combined.out
 
 # Chain two ublk devices in the same process (proxy -> storage) and
 # verify byte-exact data flow through both stacks.
