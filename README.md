@@ -59,19 +59,21 @@ at `github.com/e2b-dev/ublk-go/ublk/uring` is intentionally separate —
 most users don't touch it.
 
 > [!IMPORTANT]
-> **Heads up**: the kernel default is **only 64 ublk devices** and
-> most distros cap `ulimit -n` at 1024. If you plan to run more than
-> ~15 devices concurrently (each uses 3 fds), raise both before doing
-> anything real:
+> **The kernel default is only 64 ublk devices system-wide.** Raise it
+> before doing anything that creates more:
 >
 > ```bash
-> sudo install -m0644 etc/ublk.conf /etc/modprobe.d/ && \
+> echo 'options ublk_drv ublks_max=4096' | sudo tee /etc/modprobe.d/ublk.conf
 > sudo rmmod ublk_drv && sudo modprobe ublk_drv
-> ulimit -n 65536    # or systemd LimitNOFILE=65536
+> cat /sys/module/ublk_drv/parameters/ublks_max   # verify: 4096
 > ```
 >
+> Also: each `ublk.Device` holds 3 fds internally, so `ulimit -n 65536`
+> (or systemd `LimitNOFILE=65536`) is recommended for any process
+> creating many devices.
+>
 > See [Production setup](#production-setup-recommended-for-serious-use)
-> below for the full story.
+> below for udev tuning and the drop-in config files.
 
 ## Production setup (recommended for serious use)
 
