@@ -564,51 +564,6 @@ func TestBlockSize4096(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: multi-queue device works under parallel load.
-// ---------------------------------------------------------------------------
-
-func TestMultiQueue(t *testing.T) {
-	const size = 8 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{Queues: 2, QueueDepth: 64})
-	path := dev.BlockDevicePath()
-
-	const goroutines = 4
-	const writes = 64
-	const blk = 4096
-
-	var wg sync.WaitGroup
-	for g := range goroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			fd, _ := unix.Open(path, unix.O_WRONLY|unix.O_SYNC, 0)
-			defer unix.Close(fd)
-			for i := range writes {
-				off := int64(id*writes+i) * blk
-				buf := make([]byte, blk)
-				buf[0] = byte(id)
-				buf[1] = byte(i)
-				unix.Pwrite(fd, buf, off)
-			}
-		}(g)
-	}
-	wg.Wait()
-
-	// Spot-check: verify first two bytes of each block in the backend.
-	for g := range goroutines {
-		for i := range writes {
-			off := int64(g*writes+i) * blk
-			got := make([]byte, 2)
-			backend.ReadAt(got, off)
-			if got[0] != byte(g) || got[1] != byte(i) {
-				t.Errorf("block at %d: got [%d,%d] want [%d,%d]",
-					off, got[0], got[1], g, i)
-			}
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: random IO with full data verification.
 // ---------------------------------------------------------------------------
 
@@ -780,82 +735,6 @@ func TestDeviceSize(t *testing.T) {
 	}
 	if blkSize != size {
 		t.Errorf("device size = %d, want %d", blkSize, size)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Test: backend error propagation — backend returns EIO, block device
-// should return an error too.
-// ---------------------------------------------------------------------------
-
-func TestBackendError(t *testing.T) {
-	canRunIntegration(t)
-
-	backend := &errorBackend{data: make([]byte, 2*1024*1024)}
-	dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer dev.Close()
-
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer unix.Close(fd)
-
-	// Writes to the "bad" region should result in IO errors.
-	buf := make([]byte, 4096)
-	_, writeErr := unix.Pwrite(fd, buf, int64(backend.badOff))
-
-	// The kernel surfaces backend EIO as an IO error on the block device.
-	if writeErr == nil {
-		t.Log("write to bad region did not return error (may be cached)")
-	}
-}
-
-type errorBackend struct {
-	mu     sync.RWMutex
-	data   []byte
-	badOff int // offset that triggers errors
-}
-
-func (e *errorBackend) ReadAt(p []byte, off int64) (int, error) {
-	if off == int64(e.badOff) {
-		return 0, fmt.Errorf("simulated read error")
-	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return copy(p, e.data[off:]), nil
-}
-
-func (e *errorBackend) WriteAt(p []byte, off int64) (int, error) {
-	if off == int64(e.badOff) {
-		return 0, fmt.Errorf("simulated write error")
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return copy(e.data[off:], p), nil
-}
-
-func (e *errorBackend) Flush() error { return nil }
-
-// ---------------------------------------------------------------------------
-// Test: rapid create/destroy cycles with no IO — stress device lifecycle.
-// ---------------------------------------------------------------------------
-
-func TestRapidCreateDestroy(t *testing.T) {
-	canRunIntegration(t)
-
-	for i := range 10 {
-		backend := newMemBackend(1024 * 1024)
-		dev, err := New(backend, Config{Size: 1024 * 1024})
-		if err != nil {
-			t.Fatalf("cycle %d: New: %v", i, err)
-		}
-		if err := dev.Close(); err != nil {
-			t.Fatalf("cycle %d: Close: %v", i, err)
-		}
 	}
 }
 

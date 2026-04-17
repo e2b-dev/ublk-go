@@ -168,24 +168,6 @@ func (w *worker) handleIO(tag uint16) int32 {
 		}
 		return 0
 
-	case opDiscard:
-		if d, ok := w.dev.backend.(Discarder); ok {
-			if err := d.Discard(offset, int64(length)); err != nil {
-				return -int32(unix.EIO)
-			}
-			return 0
-		}
-		return -int32(unix.EOPNOTSUPP)
-
-	case opWriteZeroes:
-		if wz, ok := w.dev.backend.(WriteZeroer); ok {
-			if err := wz.WriteZeroes(offset, int64(length)); err != nil {
-				return -int32(unix.EIO)
-			}
-			return 0
-		}
-		return -int32(unix.EOPNOTSUPP)
-
 	default:
 		return -int32(unix.EOPNOTSUPP)
 	}

@@ -18,15 +18,6 @@ type Flusher interface {
 	Flush() error
 }
 
-// Discarder may be optionally implemented by a Backend to handle DISCARD requests.
-type Discarder interface {
-	Discard(off, length int64) error
-}
-
-// WriteZeroer may be optionally implemented by a Backend to handle WRITE_ZEROES requests.
-type WriteZeroer interface {
-	WriteZeroes(off, length int64) error
-}
 
 // Config configures a ublk block device.
 type Config struct {
@@ -37,9 +28,6 @@ type Config struct {
 	// Must be a power of 2, >= 512. Default: 512.
 	BlockSize uint32
 
-	// Queues is the number of IO queues. Default: 1.
-	Queues uint16
-
 	// QueueDepth is the per-queue IO depth. Must be a power of 2, <= 4096. Default: 128.
 	QueueDepth uint16
 }
@@ -47,9 +35,6 @@ type Config struct {
 func (c *Config) setDefaults() {
 	if c.BlockSize == 0 {
 		c.BlockSize = 512
-	}
-	if c.Queues == 0 {
-		c.Queues = 1
 	}
 	if c.QueueDepth == 0 {
 		c.QueueDepth = 128
@@ -68,9 +53,6 @@ func (c *Config) validate() error {
 	}
 	if c.QueueDepth == 0 || c.QueueDepth&(c.QueueDepth-1) != 0 || c.QueueDepth > maxQueueDepth {
 		return fmt.Errorf("QueueDepth must be a power of 2 in [1, %d], got %d", maxQueueDepth, c.QueueDepth)
-	}
-	if c.Queues == 0 {
-		return errors.New("Queues must be > 0")
 	}
 	return nil
 }
@@ -94,7 +76,8 @@ func New(backend Backend, cfg Config) (*Device, error) {
 	maxSectors := uint32(256) // 128KB max IO
 	maxIOBufBytes := maxSectors * 512
 
-	if err := dev.addDev(cfg.Queues, cfg.QueueDepth, maxIOBufBytes); err != nil {
+	const nrQueues = 1
+	if err := dev.addDev(nrQueues, cfg.QueueDepth, maxIOBufBytes); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("add device: %w", err)
 	}
@@ -118,9 +101,8 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		return nil, fmt.Errorf("set params: %w", err)
 	}
 
-	// Phase 1: Init workers — create IO rings, mmap, buffers, prepare FETCH SQEs.
-	dev.workers = make([]*worker, cfg.Queues)
-	for i := range cfg.Queues {
+	dev.workers = make([]*worker, nrQueues)
+	for i := range nrQueues {
 		w := newWorker(dev, uint16(i), cfg.QueueDepth, bufSize)
 		if err := w.init(); err != nil {
 			for j := range i {
@@ -132,10 +114,7 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		dev.workers[i] = w
 	}
 
-	// Phase 2: Start worker goroutines. Each pins an OS thread and submits
-	// FETCH_REQ via io_uring_enter. The kernel processes FETCH as task work
-	// on the submitting thread, so this MUST happen from the worker threads.
-	readyChs := make([]chan error, cfg.Queues)
+	readyChs := make([]chan error, nrQueues)
 	for i, w := range dev.workers {
 		readyChs[i] = make(chan error, 1)
 		dev.wg.Add(1)
