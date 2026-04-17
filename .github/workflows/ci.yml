@@ -9,11 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  # The 'test' job uploads coverage to Codecov with an OIDC token.
-  # That upload needs id-token: write, so it's granted at job level
-  # (other jobs stay on the default contents:read).
-
-
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -36,9 +31,36 @@ jobs:
       - name: Run golangci-lint
         run: make lint-vet
 
-  test:
-    name: Test (${{ matrix.arch }})
+  build:
+    name: Build (${{ matrix.arch }})
     strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-go@v5.6.0
+        with:
+          go-version: "1.25"
+          check-latest: false
+      - name: Build library
+        # Catches compile regressions in arch-conditional code (unsafe
+        # pointer arithmetic, struct layout) without waiting for tests.
+        run: go build ./ublk/...
+      - name: Build integration test binary (compile-only)
+        # go test -c with -tags=integration forces the test files to
+        # compile even though this job doesn't execute them.
+        run: go test -c -tags=integration -o /dev/null ./ublk/
+
+  test-unit:
+    name: Unit tests (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
@@ -55,24 +77,70 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: false
-      - name: Build library
-        # Catches compile regressions on both amd64 and arm64 before
-        # we even get to tests. Deliberately excludes example/... —
-        # those are demos / harnesses, golangci-lint already
-        # compile-checks them as part of the lint job.
-        run: go build ./ublk/...
-      - name: Unit tests (race + coverage)
+      - name: Run unit tests (race + coverage)
         run: |
+          set -eux
           mkdir -p coverage
           go test -v -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
+      - name: Coverage summary
+        if: matrix.arch == 'amd64'
+        run: |
+          set -eu
+          go tool cover -html=coverage/unit.out -o coverage/unit.html
+          {
+            echo "## Unit coverage"
+            echo ""
+            echo '```'
+            go tool cover -func=coverage/unit.out | tail -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage/unit.out | tail -1
+      - name: Upload unit coverage artifact
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-unit
+          path: coverage/
+          retention-days: 30
+      - name: Upload unit coverage to Codecov
+        if: matrix.arch == 'amd64'
+        uses: codecov/codecov-action@v5.5.4
+        with:
+          files: coverage/unit.out
+          flags: unit
+          fail_ci_if_error: false
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  test-integration:
+    name: Integration tests (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4.3.1
+      - uses: actions/setup-go@v5.6.0
+        with:
+          go-version: "1.25"
+          check-latest: false
       - name: Load ublk_drv kernel module
         run: |
           set -eux
           sudo modprobe ublk_drv
           ls -l /dev/ublk-control
-      - name: Integration tests (coverage)
+      - name: Run integration tests (race + coverage)
         run: |
           set -eux
+          mkdir -p coverage
           go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
           sudo /tmp/ublk.test -test.v -test.timeout=300s -test.coverprofile=coverage/integration.out
           sudo chmod 644 coverage/integration.out
@@ -80,38 +148,28 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           set -eu
+          go tool cover -html=coverage/integration.out -o coverage/integration.html
           {
-            echo "## Coverage"
+            echo "## Integration coverage"
             echo ""
             echo '```'
-            echo -n 'unit        '; go tool cover -func=coverage/unit.out | tail -1
-            echo -n 'integration '; go tool cover -func=coverage/integration.out | tail -1
+            go tool cover -func=coverage/integration.out | tail -1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "---"
-          go tool cover -func=coverage/unit.out | tail -1
           go tool cover -func=coverage/integration.out | tail -1
-      - name: Render HTML coverage reports
-        if: matrix.arch == 'amd64'
-        run: |
-          set -eu
-          go tool cover -html=coverage/unit.out        -o coverage/unit.html
-          go tool cover -html=coverage/integration.out -o coverage/integration.html
-      - name: Upload coverage artifact (downloadable from the run page)
+      - name: Upload integration coverage artifact
         if: matrix.arch == 'amd64'
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: coverage
+          name: coverage-integration
           path: coverage/
           retention-days: 30
-      # Codecov upload is best-effort. Works automatically for public
-      # repos (OIDC tokenless). For private repos, set CODECOV_TOKEN
-      # and it picks up. Failure here doesn't break CI.
-      - name: Upload coverage to Codecov
+      - name: Upload integration coverage to Codecov
         if: matrix.arch == 'amd64'
         uses: codecov/codecov-action@v5.5.4
         with:
-          files: coverage/unit.out,coverage/integration.out
+          files: coverage/integration.out
+          flags: integration
           fail_ci_if_error: false
           disable_search: true
           token: ${{ secrets.CODECOV_TOKEN }}
