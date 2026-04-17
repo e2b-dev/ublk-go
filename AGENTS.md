@@ -10,6 +10,7 @@ history. Keep it factual. Read this before diving in.
 make probe           # sudo needed; per-step timeouts; exits non-zero on hang
 make chain           # sudo needed; stacks two ublks (proxy -> storage)
 make stress          # sudo needed; race-detector stress (create/close churn, IO-while-close, etc.)
+make torture         # sudo needed; randomised I/O with shadow-buffer verification (fuzz-style)
 make flushbench      # sudo needed; microsecond trace of backend calls during flush operations
 ```
 
@@ -39,6 +40,16 @@ device must appear byte-for-byte at the same offset in the storage's
 in-memory backend. This validates two complete ublk stacks running
 side-by-side, two `LockOSThread`'d workers, and cross-device data
 integrity. If this test passes, composition works.
+
+`make torture` (`example/torture/main.go`) is the fuzz-style integrity
+test. Each of N worker goroutines owns a disjoint region of the device;
+each picks a random (offset, length) inside its region and a random
+direction (read or write); on write it updates an in-memory shadow of
+what the device should contain; on read it compares the result against
+the shadow and fails the run (non-zero exit, with first-differing byte
+offset) on any mismatch. Periodic `fsync` and full-region reverify runs
+exercise the write-through and journaling paths. Run for minutes, not
+seconds, to find subtle ordering bugs.
 
 `make stress` (`example/stress/main.go`) runs four stressors against
 `-race`-instrumented library code:

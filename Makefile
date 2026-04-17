@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration probe chain flushbench stress build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe chain flushbench stress torture build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -35,6 +35,13 @@ flushbench:
 stress:
 	go build -race -o /tmp/ublk-stress ./example/stress
 	sudo /tmp/ublk-stress -duration 30s
+
+# Randomised I/O torture: picks random (offset, length, direction)
+# tuples, maintains a shadow of expected device contents, fails on
+# first divergence. Catches data-integrity / offset / ordering bugs.
+torture:
+	go build -race -o /tmp/ublk-torture ./example/torture
+	sudo /tmp/ublk-torture -duration 30s -parallel 4
 
 build:
 	go build ./...
