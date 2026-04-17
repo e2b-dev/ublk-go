@@ -293,28 +293,38 @@ pushes the total near ~80% once both profiles are combined.
 
 ## Production / self-hosted-runner setup
 
-Before running integration tests against a real `ublk_drv` in
-production (or on a self-hosted CI runner), install both files from
-[`contrib/`](contrib):
+Three knobs to set for any deployment creating more than a handful of
+devices at once (target workload is "a few hundred"):
 
-- `contrib/ublk.conf` → `/etc/modprobe.d/ublk.conf`: raises
-  `ublks_max` from the default 64 to 4096. **The default limit covers
-  all devices, privileged or not** (the module description is
-  misleading). Any production workload creating >64 devices — or any
-  test run that leaks devices on SIGKILL — will otherwise hit `EACCES`
-  from `UBLK_CMD_ADD_DEV`.
-- `contrib/97-ublk-device.rules` → `/etc/udev/rules.d/`: stops udev
-  from inotify-watching every ublk device. Same policy NBD has used
-  for years. Skipping this is safe but wasteful under heavy I/O.
+1. **`ublks_max` (kernel module parameter)** — default 64, raise to
+   4096 via `contrib/ublk.conf` → `/etc/modprobe.d/ublk.conf`. The
+   counter is bumped by every `UBLK_CMD_ADD_DEV` regardless of caller
+   privileges (the module description's "unprivileged" wording is
+   misleading — the check is global). Hitting it surfaces as `EACCES`.
 
-Reload both without rebooting:
+2. **udev CHANGE-event inotify watching** — default on, turn off via
+   `contrib/97-ublk-device.rules` → `/etc/udev/rules.d/`. Same policy
+   NBD uses. Safe to skip, wasteful under heavy I/O.
+
+3. **`RLIMIT_NOFILE` on the process using the library** — default
+   1024–4096 on most distros. Each `ublk.Device` holds 3 fds
+   internally (control, char, io_uring) plus any user fd on
+   `/dev/ublkbN`. 500 devices ≈ 1500+ fds. Raise via `ulimit -n 65536`
+   in the shell or `LimitNOFILE=65536` in the systemd unit.
+
+Reload ublk_drv and udev without rebooting:
 
 ```bash
 sudo rmmod ublk_drv && sudo modprobe ublk_drv
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Verify: `cat /sys/module/ublk_drv/parameters/ublks_max` should show 4096.
+Verify:
+
+```bash
+cat /sys/module/ublk_drv/parameters/ublks_max   # 4096
+ulimit -n                                       # 65536+
+```
 
 ## CI specifics
 

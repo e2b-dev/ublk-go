@@ -36,36 +36,48 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 
 ## Production setup (recommended for serious use)
 
-By default `ublk_drv` only lets **64 devices** exist system-wide at a
-time — and the counter is bumped on `ADD_DEV` regardless of process
-privileges (the "unprivileged" in the module's own parameter
-description is misleading; the check is global). If you plan to run
-more than a handful of devices, or if you run tests that leak devices
-after crashes, raise the limit at module load.
+Three limits to raise for any non-trivial deployment. With the defaults
+you will hit one of them well before you get to a hundred devices:
 
-Also, udev's default policy watches every block device with inotify,
-which is pure overhead for userspace block devices. NBD has long
-recommended disabling it for the same reason.
+| Limit | Default | Recommended | Where |
+|---|---:|---:|---|
+| `ublks_max` (module parameter) | 64 | **4096** | `/etc/modprobe.d/ublk.conf` |
+| udev CHANGE-event inotify | on | off | `/etc/udev/rules.d/97-ublk-device.rules` |
+| `RLIMIT_NOFILE` (fd limit) of the **process** using the library | 1024–4096 | **65536+** | shell / systemd unit / ulimit |
+
+The last one matters because each `ublk.Device` holds **three fds**
+internally (control fd, char fd, io_uring fd) — 500 devices = ~1500 fds
+just from the library, plus one per open `/dev/ublkbN` you do from user
+code. Crossing the default `ulimit -n` surfaces as `ublk.New` returning
+`"too many open files"` or the io_uring setup failing partway through
+`New`, which is very confusing if you don't know to look at it.
 
 Drop-in config files are tracked in [`contrib/`](contrib):
 
 ```bash
+# Raise the kernel-side limit (ublks_max=4096).
 sudo install -m0644 contrib/ublk.conf              /etc/modprobe.d/
 sudo install -m0644 contrib/97-ublk-device.rules   /etc/udev/rules.d/
-
 sudo rmmod ublk_drv && sudo modprobe ublk_drv
 sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Raise the process-side fd limit. Shell session:
+ulimit -n 65536
+# or persistently for a systemd service, add to the unit:
+#     [Service]
+#     LimitNOFILE=65536
 ```
 
 Verify:
 
 ```bash
-cat /sys/module/ublk_drv/parameters/ublks_max   # should print 4096
+cat /sys/module/ublk_drv/parameters/ublks_max   # 4096
+ulimit -n                                       # 65536 (or higher)
 ```
 
-Theoretical hard ceiling is `UBLK_MINORS = 1 << MINORBITS ≈ 1 M`;
-practical values are whatever your workload needs. Each idle device is
-a small amount of kernel memory and a minor number — cheap.
+Theoretical kernel ceiling is `UBLK_MINORS = 1 << MINORBITS ≈ 1 M`;
+practical `ublks_max` is whatever your workload needs. Each idle
+device costs a handful of KB of kernel memory and one minor number.
 
 ## Quick start
 
