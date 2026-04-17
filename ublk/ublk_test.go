@@ -12,7 +12,6 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
 )
 
@@ -21,7 +20,7 @@ import (
 // ioctl / mmap / io_uring command silently corrupts memory.
 // ---------------------------------------------------------------------------
 
-func TestKernelABI(t *testing.T) {
+func TestUblkStructSizes(t *testing.T) {
 	if unsafe.Sizeof(ctrlCmd{}) != 32 {
 		t.Fatalf("ctrlCmd is %d bytes, kernel expects 32", unsafe.Sizeof(ctrlCmd{}))
 	}
@@ -33,108 +32,6 @@ func TestKernelABI(t *testing.T) {
 	}
 	if unsafe.Sizeof(ioDesc{}) != 24 {
 		t.Fatalf("ioDesc is %d bytes, kernel expects 24", unsafe.Sizeof(ioDesc{}))
-	}
-	if unsafe.Sizeof(uring.SQE128{}) != 128 {
-		t.Fatalf("sqe128 is %d bytes, kernel expects 128", unsafe.Sizeof(uring.SQE128{}))
-	}
-	if unsafe.Sizeof(uring.SQE64{}) != 64 {
-		t.Fatalf("sqe64 is %d bytes, kernel expects 64", unsafe.Sizeof(uring.SQE64{}))
-	}
-	if unsafe.Sizeof(uring.CQE{}) != 16 {
-		t.Fatalf("cqe is %d bytes, kernel expects 16 (not 32!)", unsafe.Sizeof(uring.CQE{}))
-	}
-
-	// sqe128.Cmd must be at byte 48 — that's where io_uring_sqe_cmd() reads.
-	var s uring.SQE128
-	off := uintptr(unsafe.Pointer(&s.Cmd[0])) - uintptr(unsafe.Pointer(&s))
-	if off != 48 {
-		t.Fatalf("sqe128.Cmd at offset %d, kernel expects 48", off)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// io_uring smoke: create a ring and do a real NOP round-trip through the
-// kernel — verifies our mmap layout, SQE/CQE indexing, submit, and wait.
-// ---------------------------------------------------------------------------
-
-func TestIoUringNOPRoundTrip(t *testing.T) {
-	r, err := uring.New(16)
-	if err != nil {
-		t.Fatalf("uring.New: %v", err)
-	}
-	defer r.Close()
-
-	for i := range 16 {
-		sqe := r.GetSQE64()
-		if sqe == nil {
-			t.Fatalf("GetSQE64 nil at %d", i)
-		}
-		sqe.Opcode = 0 // IORING_OP_NOP
-		sqe.UserData = uint64(i) + 1
-	}
-
-	n, err := r.Submit()
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-	if n != 16 {
-		t.Fatalf("submitted %d, want 16", n)
-	}
-
-	seen := make(map[uint64]bool)
-	for range 16 {
-		c, err := r.WaitCQE()
-		if err != nil {
-			t.Fatalf("waitCQE: %v", err)
-		}
-		if c.Res != 0 {
-			t.Errorf("NOP returned %d", c.Res)
-		}
-		seen[c.UserData] = true
-		r.SeenCQE()
-	}
-
-	for i := uint64(1); i <= 16; i++ {
-		if !seen[i] {
-			t.Errorf("never got CQE for UserData=%d", i)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// io_uring sustained: verify SQE reuse works across many submit/wait cycles
-// (exercises head/tail wrap-around in both SQ and CQ).
-// ---------------------------------------------------------------------------
-
-func TestIoUringManyCycles(t *testing.T) {
-	r, err := uring.New(4)
-	if err != nil {
-		t.Fatalf("uring.New: %v", err)
-	}
-	defer r.Close()
-
-	for cycle := range 200 {
-		for i := range int(r.SQEntries()) {
-			sqe := r.GetSQE64()
-			if sqe == nil {
-				t.Fatalf("cycle %d: GetSQE64 nil at %d", cycle, i)
-			}
-			sqe.Opcode = 0
-			sqe.UserData = uint64(cycle*1000 + i)
-		}
-		if _, err := r.Submit(); err != nil {
-			t.Fatalf("cycle %d: submit: %v", cycle, err)
-		}
-		for range r.SQEntries() {
-			c, err := r.WaitCQE()
-			if err != nil {
-				t.Fatalf("cycle %d: waitCQE: %v", cycle, err)
-			}
-			if c.Res != 0 {
-				t.Fatalf("cycle %d: NOP res=%d", cycle, c.Res)
-			}
-			r.SeenCQE()
-		}
 	}
 }
 
