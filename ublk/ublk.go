@@ -1,12 +1,18 @@
 // Package ublk provides Linux userspace block devices via the ublk driver.
 package ublk
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
-// Backend must be safe for concurrent use.
+// Backend is the storage that the block device is backed by. It must
+// satisfy io.ReaderAt and io.WriterAt, whose contracts already require
+// that concurrent calls on disjoint ranges are safe — we rely on that
+// to let the kernel submit IO with queue depth 128.
 type Backend interface {
-	ReadAt(p []byte, off int64) (n int, err error)
-	WriteAt(p []byte, off int64) (n int, err error)
+	io.ReaderAt
+	io.WriterAt
 }
 
 // New creates a ublk block device. Size must be a positive multiple of 512.
