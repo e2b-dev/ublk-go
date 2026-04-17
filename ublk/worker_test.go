@@ -83,15 +83,17 @@ func TestWorkerHandleIOZeroLength(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			backend := &stubBackend{
-				readAt: func(_ []byte, _ int64) (int, error) {
+			backend := &stubBackend{}
+			if tc.op == opRead {
+				backend.readAt = func(_ []byte, _ int64) (int, error) {
 					t.Fatal("ReadAt should not be called for zero-length read")
 					return 0, nil
-				},
-				writeAt: func(_ []byte, _ int64) (int, error) {
+				}
+			} else {
+				backend.writeAt = func(_ []byte, _ int64) (int, error) {
 					t.Fatal("WriteAt should not be called for zero-length write")
 					return 0, nil
-				},
+				}
 			}
 			w := newTestWorker(backend)
 			w.setDesc(ioDesc{OpFlags: tc.op, NrSectors: 0, StartSector: 11})
