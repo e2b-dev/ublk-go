@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration probe chain flushbench build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe chain flushbench stress build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -28,6 +28,13 @@ chain:
 flushbench:
 	go build -race -o /tmp/ublk-flushbench ./example/flushbench
 	sudo /tmp/ublk-flushbench
+
+# Race-detector stress run: exercises rapid Create/Close, I/O-during-
+# shutdown, concurrent Close, and many parallel devices. Passes if the
+# race detector stays silent for the configured duration.
+stress:
+	go build -race -o /tmp/ublk-stress ./example/stress
+	sudo /tmp/ublk-stress -duration 30s
 
 build:
 	go build ./...

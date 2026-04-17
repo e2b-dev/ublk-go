@@ -9,6 +9,8 @@ history. Keep it factual. Read this before diving in.
 ```bash
 make probe           # sudo needed; per-step timeouts; exits non-zero on hang
 make chain           # sudo needed; stacks two ublks (proxy -> storage)
+make stress          # sudo needed; race-detector stress (create/close churn, IO-while-close, etc.)
+make flushbench      # sudo needed; microsecond trace of backend calls during flush operations
 ```
 
 The probe (`example/probe/main.go`) exercises both sides of the stack:
@@ -37,6 +39,22 @@ device must appear byte-for-byte at the same offset in the storage's
 in-memory backend. This validates two complete ublk stacks running
 side-by-side, two `LockOSThread`'d workers, and cross-device data
 integrity. If this test passes, composition works.
+
+`make stress` (`example/stress/main.go`) runs four stressors against
+`-race`-instrumented library code:
+
+- **churn** — tight `New`→small-I/O→`Close` loop, catches leaks and
+  shutdown-order races.
+- **ioWhileClose** — I/O goroutines hammer the block device; `Close()`
+  mid-stream. Catches races between worker cleanup and in-flight I/O.
+- **concurrentClose** — N goroutines call `Close()` at once. Confirms
+  the `sync.Once` guard is sufficient.
+- **many** — N devices alive simultaneously with writer goroutines,
+  closed in parallel. Catches cross-device state bleed.
+
+Any race-detector warning fails the run (non-zero exit). Run for
+longer (`-duration 5m`) before a release or after touching shutdown
+code.
 
 Other diagnostic commands:
 
