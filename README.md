@@ -3,7 +3,7 @@
 [![CI](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/e2b-dev/ublk-go/branch/main/graph/badge.svg)](https://codecov.io/gh/e2b-dev/ublk-go)
 [![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Pure Go library for Linux userspace block devices via the [ublk](https://docs.kernel.org/block/ublk.html) driver and io_uring.
 
@@ -259,4 +259,4 @@ See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned dev
 
 ## License
 
-[MIT](LICENSE) © 2026 e2b-dev
+[Apache License 2.0](LICENSE) © 2026 e2b-dev
