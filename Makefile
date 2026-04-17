@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -8,6 +8,12 @@ test-unit:
 test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=120s
+
+# End-to-end autonomous smoke test: create device, mkfs/mount/IO/umount/close.
+# Each step has a timeout so hangs surface as failures.
+probe:
+	go build -race -o /tmp/ublk-probe ./example/probe
+	sudo /tmp/ublk-probe
 
 build:
 	go build ./...
