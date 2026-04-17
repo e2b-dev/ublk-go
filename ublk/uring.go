@@ -265,7 +265,7 @@ func (r *ring) getSQE64() *sqe64 {
 	return sqe
 }
 
-func (r *ring) submit() (int, error) {
+func (r *ring) flushSQ() (uint32, error) {
 	head := r.sqeLocalHead
 	tail := r.sqeLocalTail
 	count := tail - head
@@ -281,6 +281,14 @@ func (r *ring) submit() (int, error) {
 
 	atomic.StoreUint32(r.sqTail, tail)
 	r.sqeLocalHead = tail
+	return count, nil
+}
+
+func (r *ring) submit() (int, error) {
+	count, err := r.flushSQ()
+	if err != nil || count == 0 {
+		return int(count), err
+	}
 
 	ret, _, errno := syscall.Syscall6(
 		unix.SYS_IO_URING_ENTER,
@@ -288,6 +296,24 @@ func (r *ring) submit() (int, error) {
 	)
 	if errno != 0 {
 		return 0, fmt.Errorf("io_uring_enter submit: %w", errno)
+	}
+	return int(ret), nil
+}
+
+// submitAndWait submits pending SQEs and processes completions (task work).
+// This is equivalent to liburing's io_uring_submit_and_wait(ring, 0).
+func (r *ring) submitAndWait() (int, error) {
+	count, err := r.flushSQ()
+	if err != nil {
+		return 0, err
+	}
+
+	ret, _, errno := syscall.Syscall6(
+		unix.SYS_IO_URING_ENTER,
+		uintptr(r.fd), uintptr(count), 0, ioringEnterGetevents, 0, 0,
+	)
+	if errno != 0 {
+		return 0, fmt.Errorf("io_uring_enter submit+wait: %w", errno)
 	}
 	return int(ret), nil
 }

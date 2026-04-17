@@ -118,10 +118,7 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		return nil, fmt.Errorf("set params: %w", err)
 	}
 
-	// Init all workers: create IO rings (regular 64-byte SQEs), mmap
-	// descriptors, allocate buffers, submit FETCH_REQ. The FETCH_REQ are
-	// processed inline by the kernel during io_uring_enter, so by the time
-	// init() returns, ublk_mark_io_ready() has been called for every tag.
+	// Phase 1: Init workers — create IO rings, mmap, buffers, prepare FETCH SQEs.
 	dev.workers = make([]*worker, cfg.Queues)
 	for i := range cfg.Queues {
 		w := newWorker(dev, uint16(i), cfg.QueueDepth, bufSize)
@@ -135,20 +132,28 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		dev.workers[i] = w
 	}
 
-	// START_DEV. The kernel checks that all FETCH_REQ have been processed
-	// (which they have — init submitted them inline above).
-	if err := dev.startDev(); err != nil {
-		for _, w := range dev.workers {
-			w.cleanup()
+	// Phase 2: Start worker goroutines. Each pins an OS thread and submits
+	// FETCH_REQ via io_uring_enter. The kernel processes FETCH as task work
+	// on the submitting thread, so this MUST happen from the worker threads.
+	readyChs := make([]chan error, cfg.Queues)
+	for i, w := range dev.workers {
+		readyChs[i] = make(chan error, 1)
+		dev.wg.Add(1)
+		go w.run(readyChs[i])
+	}
+	for i, ch := range readyChs {
+		if err := <-ch; err != nil {
+			cleanup()
+			return nil, fmt.Errorf("queue %d FETCH: %w", i, err)
 		}
-		cleanup()
-		return nil, fmt.Errorf("start device: %w", err)
 	}
 
-	// Launch worker goroutines for the IO event loop.
-	for _, w := range dev.workers {
-		dev.wg.Add(1)
-		go w.run()
+	// Phase 3: START_DEV. The kernel's handler blocks until all FETCH_REQ
+	// are processed. The workers submitted them above on their own threads,
+	// so the kernel can process them concurrently with this call.
+	if err := dev.startDev(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("start device: %w", err)
 	}
 
 	return dev, nil
