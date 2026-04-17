@@ -24,5 +24,3 @@ linters:
       - path: "example/"
         linters: [errcheck]
 
-run:
-  go: "1.25"
