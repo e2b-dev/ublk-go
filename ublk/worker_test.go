@@ -1,6 +1,7 @@
 package ublk
 
 import (
+	"errors"
 	"io"
 	"testing"
 	"unsafe"
@@ -86,13 +87,11 @@ func TestWorkerHandleIOZeroLength(t *testing.T) {
 			backend := &stubBackend{}
 			if tc.op == opRead {
 				backend.readAt = func(_ []byte, _ int64) (int, error) {
-					t.Fatal("ReadAt should not be called for zero-length read")
-					return 0, nil
+					return 0, errors.New("ReadAt should not be called for zero-length read")
 				}
 			} else {
 				backend.writeAt = func(_ []byte, _ int64) (int, error) {
-					t.Fatal("WriteAt should not be called for zero-length write")
-					return 0, nil
+					return 0, errors.New("WriteAt should not be called for zero-length write")
 				}
 			}
 			w := newTestWorker(backend)
