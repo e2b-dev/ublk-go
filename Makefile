@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration probe chain flushbench stress torture build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration probe chain flushbench flushbench-race stress torture build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -24,10 +24,15 @@ chain:
 # Diagnose where time is spent during filesystem flushes.
 # Prints per-backend-call trace with microsecond timestamps so you can
 # see whether our stack is slow or the kernel is waiting on its own
-# timers.
+# timers. Built without -race so latency numbers reflect production;
+# use 'make flushbench-race' for the race-detector version.
 flushbench:
-	go build -race -o /tmp/ublk-flushbench ./example/flushbench
+	go build -o /tmp/ublk-flushbench ./example/flushbench
 	sudo /tmp/ublk-flushbench
+
+flushbench-race:
+	go build -race -o /tmp/ublk-flushbench-race ./example/flushbench
+	sudo /tmp/ublk-flushbench-race
 
 # Race-detector stress run: exercises rapid Create/Close, I/O-during-
 # shutdown, concurrent Close, and many parallel devices. Passes if the
