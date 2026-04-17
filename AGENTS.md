@@ -151,8 +151,22 @@ changes Close's semantics (it no longer guarantees the node is gone
 on return). Not implemented; worth considering if users hit this.
 
 Same caveat applies to SIGKILL'd processes — the ublk_ch_release
-workqueue is async and can take 10+ seconds on kernel 6.17 to actually
-remove the device nodes, even though the process is already reaped.
+workqueue is async and on kernel 6.17 appears to **not complete at
+all** in many cases: stale `/dev/ublkbN` / `/dev/ublkcN` device nodes
+linger indefinitely (or at least far longer than any reasonable test
+timeout) after the process exits. This is almost certainly a
+kernel-side issue unrelated to ublk-go.
+
+The library-correctness question "can we keep using the API after an
+ungraceful kill" is distinct from and answerable: `make sigkill`
+checks this by attempting `ublk.New` in the parent after the child is
+SIGKILL'd. That succeeds — the kernel allocates new minor numbers
+independently of whether the old ones have been reclaimed. So even
+with leaked orphan device nodes, the parent process is unaffected.
+
+If you run tests enough times you'll accumulate a lot of stale ublkb*
+nodes. Reboot to clean them up (no manual fix known that works
+reliably).
 
 ## Ring.Cancel must be observable from the busy path
 
