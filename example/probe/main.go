@@ -129,7 +129,9 @@ func (p *probe) run() error {
 		{"mount", p.mountFS},
 		{"single write + syncfs triggers backend writes", p.singleWrite},
 		{"fsync propagates writes to backend", p.fsyncVisible},
-		{"drop caches + readback triggers backend reads", p.dropAndVerify},
+		{"flush fs before drop_caches", p.flushFS},
+		{"drop caches is fast once fs is clean", p.dropCaches},
+		{"readback after drop triggers backend reads", p.readbackAfterDrop},
 		{"readback value matches backend storage directly", p.backendEquivalence},
 		{"concurrent writers", p.concurrent},
 		{"remount (journal replay)", p.remount},
@@ -345,12 +347,38 @@ func (p *probe) fsyncVisible() error {
 	return nil
 }
 
-func (p *probe) dropAndVerify() error {
-	before := p.backend.reads.Load()
+// flushFS forces a full filesystem-wide sync so no dirty data is
+// lingering when the next step drops caches. Without this, drop_caches
+// implicitly triggers a sync that can take seconds on a slow-ish block
+// device, confounding downstream timings.
+func (p *probe) flushFS() error {
+	return runCmd("sync", "-f", p.mountpoint)
+}
+
+// dropCaches evicts clean page cache / dentries / inodes. With the
+// filesystem already synced, this should complete in milliseconds and
+// cause zero backend I/O (nothing dirty to flush, nothing to read yet).
+func (p *probe) dropCaches() error {
+	beforeW := p.backend.writes.Load()
 
 	if err := os.WriteFile("/proc/sys/vm/drop_caches", []byte("3"), 0); err != nil {
 		return fmt.Errorf("drop_caches: %w", err)
 	}
+
+	// A clean filesystem should need at most a handful of metadata
+	// writes here (superblock timestamp, etc.). More means the
+	// previous flushFS step didn't actually drain dirty data.
+	if dw := p.backend.writes.Load() - beforeW; dw > 16 {
+		return fmt.Errorf("drop_caches triggered %d backend writes; fs was not clean going in", dw)
+	}
+	return nil
+}
+
+// readbackAfterDrop reads a file whose bytes are no longer cached in
+// RAM, verifies content, and asserts Backend.ReadAt was invoked.
+func (p *probe) readbackAfterDrop() error {
+	before := p.backend.reads.Load()
+
 	want, err := os.ReadFile(p.mountpoint + "/probe.txt")
 	if err != nil {
 		return fmt.Errorf("read probe.txt: %w", err)
@@ -359,7 +387,7 @@ func (p *probe) dropAndVerify() error {
 		return errors.New("probe.txt did not round-trip correctly")
 	}
 	if p.backend.reads.Load() == before {
-		return errors.New("post-drop_caches read was served entirely from cache; Backend.ReadAt not invoked")
+		return errors.New("readback served entirely from cache; Backend.ReadAt not invoked")
 	}
 	return nil
 }
