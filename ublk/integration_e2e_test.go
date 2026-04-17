@@ -34,7 +34,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ublk.New: %v", err)
 	}
-	devPath := dev.BlockDevicePath()
+	devPath := dev.Path()
 	t.Cleanup(func() { _ = dev.Close() })
 
 	var mountpoint string
@@ -77,7 +77,7 @@ func TestEndToEnd(t *testing.T) {
 
 	t.Run("O_DIRECT zero-read of fresh device reaches backend", func(t *testing.T) {
 		before := be.reads.Load()
-		buf, err := e2eDirectRead(devPath, 0, blkSize)
+		buf, err := directRead(devPath, 0, blkSize)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,10 +96,10 @@ func TestEndToEnd(t *testing.T) {
 		}
 		const off int64 = 8 * blkSize
 
-		if err := e2eDirectWrite(devPath, off, pattern); err != nil {
+		if err := directWrite(devPath, off, pattern); err != nil {
 			t.Fatalf("direct write: %v", err)
 		}
-		got, err := e2eDirectRead(devPath, off, blkSize)
+		got, err := directRead(devPath, off, blkSize)
 		if err != nil {
 			t.Fatalf("direct read: %v", err)
 		}
@@ -289,7 +289,7 @@ func TestEndToEnd(t *testing.T) {
 
 // --- helpers used by integration_e2e_test.go ---
 
-func e2eAlignedBuf(n int) []byte {
+func alignedBuf(n int) []byte {
 	const align = 4096
 	raw := make([]byte, n+align)
 	addr := uintptr(unsafe.Pointer(&raw[0]))
@@ -300,13 +300,13 @@ func e2eAlignedBuf(n int) []byte {
 	return raw[off : off+n]
 }
 
-func e2eDirectRead(path string, off int64, n int) ([]byte, error) {
+func directRead(path string, off int64, n int) ([]byte, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECT, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer unix.Close(fd)
-	buf := e2eAlignedBuf(n)
+	buf := alignedBuf(n)
 	got, err := unix.Pread(fd, buf, off)
 	if err != nil {
 		return nil, err
@@ -317,13 +317,13 @@ func e2eDirectRead(path string, off int64, n int) ([]byte, error) {
 	return buf, nil
 }
 
-func e2eDirectWrite(path string, off int64, data []byte) error {
+func directWrite(path string, off int64, data []byte) error {
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_DIRECT, 0)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(fd)
-	buf := e2eAlignedBuf(len(data))
+	buf := alignedBuf(len(data))
 	copy(buf, data)
 	n, err := unix.Pwrite(fd, buf, off)
 	if err != nil {

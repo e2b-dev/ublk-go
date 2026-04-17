@@ -178,7 +178,7 @@ func churn(ctx context.Context, _ int) summary {
 			continue
 		}
 		// Light I/O so the worker actually services some ops.
-		if fd, err := unix.Open(dev.BlockDevicePath(), unix.O_WRONLY, 0); err == nil {
+		if fd, err := unix.Open(dev.Path(), unix.O_WRONLY, 0); err == nil {
 			_, _ = unix.Pwrite(fd, make([]byte, blkSize), 0)
 			_ = unix.Close(fd)
 		}
@@ -208,7 +208,7 @@ func ioWhileClose(ctx context.Context, workers int) summary {
 			sm.ioErrors++
 			continue
 		}
-		path := dev.BlockDevicePath()
+		path := dev.Path()
 
 		// Pre-open all fds so main can close them later to unblock stuck
 		// syscalls. Opening after device creation but before launching
@@ -322,7 +322,7 @@ func manyDevices(ctx context.Context, parallel int) summary {
 				sm.ioErrors++
 				continue
 			}
-			fd, err := unix.Open(d.BlockDevicePath(), unix.O_WRONLY, 0)
+			fd, err := unix.Open(d.Path(), unix.O_WRONLY, 0)
 			if err != nil {
 				_ = d.Close()
 				sm.ioErrors++

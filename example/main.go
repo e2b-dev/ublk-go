@@ -42,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Block device ready: %s\n", dev.BlockDevicePath())
+	fmt.Printf("Block device ready: %s\n", dev.Path())
 	fmt.Println("Press Ctrl+C to stop.")
 
 	sig := make(chan os.Signal, 1)

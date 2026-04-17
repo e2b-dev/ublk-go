@@ -150,7 +150,7 @@ func lowRate() error {
 	}
 	defer dev.Close()
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_DIRECT, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_RDWR|unix.O_DIRECT, 0)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func totalWriteFail() error {
 	}
 	defer dev.Close()
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_DIRECT, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_RDWR|unix.O_DIRECT, 0)
 	if err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func totalReadFail() error {
 	}
 	defer dev.Close()
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY|unix.O_DIRECT, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_RDONLY|unix.O_DIRECT, 0)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func closeWithErrors() error {
 		return fmt.Errorf("ublk.New: %w", err)
 	}
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_WRONLY|unix.O_DIRECT, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_WRONLY|unix.O_DIRECT, 0)
 	if err != nil {
 		_ = dev.Close()
 		return err

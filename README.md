@@ -108,7 +108,7 @@ func main() {
     }
     defer dev.Close()
 
-    fmt.Println(dev.BlockDevicePath())
+    fmt.Println(dev.Path())
 
     sig := make(chan os.Signal, 1)
     signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -132,7 +132,7 @@ type Backend interface {
 }
 
 func New(backend Backend, size uint64) (*Device, error)
-func (*Device) BlockDevicePath() string
+func (*Device) Path() string
 func (*Device) Close() error
 ```
 
@@ -149,7 +149,7 @@ standard Linux block-device teardown, not a ublk quirk, but it means
 the following deadlocks:
 
 ```go
-fd, _ := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+fd, _ := unix.Open(dev.Path(), unix.O_RDWR, 0)
 // ... some work ...
 dev.Close()        // ← hangs forever; del_gendisk waits for `fd`
 unix.Close(fd)     // never reached
@@ -158,7 +158,7 @@ unix.Close(fd)     // never reached
 Correct order:
 
 ```go
-fd, _ := unix.Open(dev.BlockDevicePath(), unix.O_RDWR, 0)
+fd, _ := unix.Open(dev.Path(), unix.O_RDWR, 0)
 // ... some work ...
 unix.Close(fd)     // release the block device first
 dev.Close()        // now Close can proceed

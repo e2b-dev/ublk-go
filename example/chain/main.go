@@ -136,13 +136,13 @@ func runChain(stepTimeout time.Duration) error {
 		return fmt.Errorf("create storage ublk: %w", err)
 	}
 	defer func() { _ = storage.Close() }()
-	log.Printf("storage ublk:  %s (%d MiB, in-memory backend)", storage.BlockDevicePath(), chainSize/1024/1024)
+	log.Printf("storage ublk:  %s (%d MiB, in-memory backend)", storage.Path(), chainSize/1024/1024)
 
 	// Open the storage block device with O_DIRECT so the proxy's
 	// forwarded I/O goes through our own Backend, not the kernel page
 	// cache above it. O_DIRECT requires aligned buffers, which the
 	// ublk worker always produces.
-	storageFd, err := unix.Open(storage.BlockDevicePath(),
+	storageFd, err := unix.Open(storage.Path(),
 		unix.O_RDWR|unix.O_DIRECT, 0)
 	if err != nil {
 		return fmt.Errorf("open storage block device: %w", err)
@@ -157,12 +157,12 @@ func runChain(stepTimeout time.Duration) error {
 		return fmt.Errorf("create proxy ublk: %w", err)
 	}
 	defer func() { _ = proxy.Close() }()
-	log.Printf("proxy ublk:    %s (%d MiB, forwards to %s)", proxy.BlockDevicePath(), chainSize/1024/1024, storage.BlockDevicePath())
+	log.Printf("proxy ublk:    %s (%d MiB, forwards to %s)", proxy.Path(), chainSize/1024/1024, storage.Path())
 
 	// --- user side: drive I/O into the proxy, check it shows up
 	// byte-exact in the storage's in-memory backend. ---
 
-	proxyFd, err := unix.Open(proxy.BlockDevicePath(),
+	proxyFd, err := unix.Open(proxy.Path(),
 		unix.O_RDWR|unix.O_DIRECT, 0)
 	if err != nil {
 		return fmt.Errorf("open proxy block device: %w", err)

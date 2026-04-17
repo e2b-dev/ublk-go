@@ -139,7 +139,7 @@ func run() error {
 	}
 	defer dev.Close()
 
-	if err := shell("mkfs.ext4", "-q", "-F", dev.BlockDevicePath()); err != nil {
+	if err := shell("mkfs.ext4", "-q", "-F", dev.Path()); err != nil {
 		return err
 	}
 	mp, err := os.MkdirTemp("", "ublk-flushbench-*")
@@ -147,7 +147,7 @@ func run() error {
 		return err
 	}
 	defer os.Remove(mp)
-	if err := shell("mount", dev.BlockDevicePath(), mp); err != nil {
+	if err := shell("mount", dev.Path(), mp); err != nil {
 		return err
 	}
 	defer shell("umount", mp)

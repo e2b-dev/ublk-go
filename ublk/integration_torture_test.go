@@ -54,7 +54,7 @@ func TestTortureRandomIO(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = dev.Close() })
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_DIRECT, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_RDWR|unix.O_DIRECT, 0)
 	if err != nil {
 		t.Fatalf("open block device: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestTortureRandomIO(t *testing.T) {
 	}
 
 	t.Logf("torture target: %s  size=%d MiB  duration=%v  parallel=%d",
-		dev.BlockDevicePath(), devSize/1024/1024, duration, parallel)
+		dev.Path(), devSize/1024/1024, duration, parallel)
 
 	var wg sync.WaitGroup
 	for _, r := range regions {
@@ -129,7 +129,7 @@ func TestTortureRandomIO(t *testing.T) {
 				off := r.start + offInRegion
 
 				if rng(2) == 1 {
-					buf := e2eAlignedBuf(length)
+					buf := alignedBuf(length)
 					if _, err := rand.Read(buf); err != nil {
 						r.errOnce.Do(func() { r.err = err })
 						return
@@ -145,7 +145,7 @@ func TestTortureRandomIO(t *testing.T) {
 					copy(r.shadow[offInRegion:], buf)
 					r.writes.Add(1)
 				} else {
-					buf := e2eAlignedBuf(length)
+					buf := alignedBuf(length)
 					n, err := unix.Pread(fd, buf, off)
 					if err != nil || n != length {
 						r.errOnce.Do(func() {
@@ -207,7 +207,7 @@ loop:
 // chunks and compares against the shadow.
 func tortureVerifyRegion(fd int, start, length int64, shadow []byte) error {
 	const maxIO = 128 * 1024
-	buf := e2eAlignedBuf(maxIO)
+	buf := alignedBuf(maxIO)
 	for pos := int64(0); pos < length; pos += int64(len(buf)) {
 		n := int64(len(buf))
 		if pos+n > length {

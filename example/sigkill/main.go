@@ -98,11 +98,11 @@ func runChild() {
 	}
 	// Announce the device path on stdout so the parent knows what
 	// to look for after it kills us.
-	fmt.Println("CHILD_READY", dev.BlockDevicePath())
+	fmt.Println("CHILD_READY", dev.Path())
 
 	// Open our own block device and write forever. Keeps the child
 	// doing real work when the SIGKILL lands.
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_WRONLY, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_WRONLY, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "child: open: %v\n", err)
 		os.Exit(2)
@@ -179,7 +179,7 @@ func runParent() error {
 			time.Since(newStart).Truncate(time.Millisecond), err)
 	}
 	log.Printf("parent created fresh device %s in %v",
-		dev2.BlockDevicePath(), time.Since(newStart).Truncate(time.Millisecond))
+		dev2.Path(), time.Since(newStart).Truncate(time.Millisecond))
 
 	if err := dev2.Close(); err != nil {
 		return fmt.Errorf("parent Close: %w", err)

@@ -89,7 +89,7 @@ func run() error {
 		}
 	}()
 
-	path := dev.BlockDevicePath()
+	path := dev.Path()
 	log.Printf("created %s (%d MiB)", path, devSize/1024/1024)
 	stats(backend, "idle")
 

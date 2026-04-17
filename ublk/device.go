@@ -181,8 +181,9 @@ func (d *Device) ctrlOp(ioctlCmd, legacyCmd uint32) uint32 {
 	return legacyCmd
 }
 
-// BlockDevicePath returns the path to the block device (e.g., /dev/ublkb0).
-func (d *Device) BlockDevicePath() string {
+// Path returns the block-device node path (e.g. /dev/ublkb3) so callers
+// can open it for I/O. Returns "" if the device was never created.
+func (d *Device) Path() string {
 	if d.id < 0 {
 		return ""
 	}

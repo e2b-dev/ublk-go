@@ -57,7 +57,7 @@ func TestWritePathEndToEnd(t *testing.T) {
 	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	pattern := make([]byte, 4096)
 	for i := range pattern {
@@ -89,7 +89,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDONLY)
 
 	pattern := make([]byte, 4096)
 	rand.Read(pattern)
@@ -97,7 +97,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 	backend.WriteAt(pattern, off)
 
 	// Drop page cache.
-	flushFd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
+	flushFd, err := unix.Open(dev.Path(), unix.O_RDONLY, 0)
 	if err == nil {
 		unix.Syscall(unix.SYS_IOCTL, uintptr(flushFd), 0x1261, 0)
 		unix.Close(flushFd)
@@ -122,7 +122,7 @@ func TestFullDeviceIntegrity(t *testing.T) {
 	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	const blk = 4096
 	for off := int64(0); off < size; off += blk {
@@ -156,7 +156,7 @@ func TestConcurrentWriters(t *testing.T) {
 	t.Parallel()
 	const size = 16 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	path := dev.BlockDevicePath()
+	path := dev.Path()
 
 	const workers = 8
 	const blocksPerWorker = 128
@@ -222,7 +222,7 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 			t.Fatalf("cycle %d New: %v", cycle, err)
 		}
 
-		path := dev.BlockDevicePath()
+		path := dev.Path()
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("cycle %d: block device missing: %v", cycle, err)
 		}
@@ -244,7 +244,7 @@ func TestRandomIOVerified(t *testing.T) {
 	t.Parallel()
 	const size = 4 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	const blk = 4096
 	const iterations = 200
@@ -283,7 +283,7 @@ func TestCloseIdempotent(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	path := dev.BlockDevicePath()
+	path := dev.Path()
 
 	for i := range 3 {
 		if err := dev.Close(); err != nil {
@@ -300,7 +300,7 @@ func TestLastBlock(t *testing.T) {
 	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	const blk = 4096
 	lastOff := int64(size - blk)
@@ -322,7 +322,7 @@ func TestOverwrite(t *testing.T) {
 	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	const blk = 4096
 	buf1 := make([]byte, blk)
@@ -346,7 +346,7 @@ func TestWriteThenReadViaBlockDev(t *testing.T) {
 	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	const blk = 4096
 	offsets := []int64{0, blk, 16 * blk, size/2 - blk, size - blk}
@@ -375,7 +375,7 @@ func TestDeviceSize(t *testing.T) {
 	const size = 8 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
 
-	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
+	fd, err := unix.Open(dev.Path(), unix.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestSmallestDevice(t *testing.T) {
 	t.Parallel()
 	const size = 512
 	dev, backend := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDWR)
 
 	wbuf := make([]byte, 512)
 	for i := range wbuf {
@@ -416,7 +416,7 @@ func TestReadUnwrittenRegion(t *testing.T) {
 	t.Parallel()
 	const size = 2 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDONLY)
+	fd := openBlkDev(t, dev.Path(), unix.O_RDONLY)
 
 	buf := make([]byte, 4096)
 	n, err := unix.Pread(fd, buf, 0)
@@ -430,7 +430,7 @@ func TestReadUnwrittenRegion(t *testing.T) {
 	}
 }
 
-func TestBlockDevicePath(t *testing.T) {
+func TestPath(t *testing.T) {
 	t.Parallel()
 	backend := newMemBackend(1024 * 1024)
 	dev, err := New(backend, 1024*1024)
@@ -439,7 +439,7 @@ func TestBlockDevicePath(t *testing.T) {
 	}
 	defer dev.Close()
 
-	path := dev.BlockDevicePath()
+	path := dev.Path()
 	if path == "" {
 		t.Fatal("BlockDevicePath is empty")
 	}
@@ -466,7 +466,7 @@ func TestMultipleDevices(t *testing.T) {
 
 	paths := make(map[string]bool)
 	for _, d := range devs {
-		p := d.BlockDevicePath()
+		p := d.Path()
 		if paths[p] {
 			t.Errorf("duplicate path: %s", p)
 		}
