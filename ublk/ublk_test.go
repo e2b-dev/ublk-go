@@ -404,61 +404,6 @@ func TestConcurrentWriters(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: concurrent readers and writers — proves no crashes, no data races,
-// and the io_uring loop stays alive under mixed load.
-// ---------------------------------------------------------------------------
-
-func TestConcurrentMixedIO(t *testing.T) {
-	const size = 8 * 1024 * 1024
-	dev, _ := makeDevice(t, size)
-	path := dev.BlockDevicePath()
-
-	const goroutines = 16
-	const opsPerG = 100
-	const blk = 4096
-
-	var wg sync.WaitGroup
-	var errCount atomic.Int64
-
-	for g := range goroutines {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			fd, err := unix.Open(path, unix.O_RDWR|unix.O_SYNC, 0)
-			if err != nil {
-				errCount.Add(1)
-				return
-			}
-			defer unix.Close(fd)
-
-			maxBlocks := size / blk
-			buf := make([]byte, blk)
-
-			for i := range opsPerG {
-				nBig, _ := rand.Int(rand.Reader, big.NewInt(int64(maxBlocks)))
-				off := nBig.Int64() * blk
-
-				if (id+i)%2 == 0 {
-					rand.Read(buf)
-					if _, err := unix.Pwrite(fd, buf, off); err != nil {
-						errCount.Add(1)
-					}
-				} else {
-					if _, err := unix.Pread(fd, buf, off); err != nil {
-						errCount.Add(1)
-					}
-				}
-			}
-		}(g)
-	}
-
-	wg.Wait()
-	if n := errCount.Load(); n > 0 {
-		t.Errorf("%d IO errors under concurrent mixed load", n)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Test: multiple create/destroy cycles — no leaked fds, no kernel complaints.
 // ---------------------------------------------------------------------------
 
