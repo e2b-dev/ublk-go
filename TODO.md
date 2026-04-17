@@ -2,6 +2,14 @@
 
 Features and optimizations to add on top of the current minimal implementation.
 
+## Build
+
+### CGO for kernel constants
+
+Import ublk/io_uring constants and struct sizes directly from the kernel's
+`linux/ublk_cmd.h` header via CGO instead of hardcoding them. Eliminates the
+risk of constants drifting from the running kernel.
+
 ## Performance
 
 ### Zero-Copy Mode
