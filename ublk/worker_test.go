@@ -32,7 +32,9 @@ func (b *stubBackend) WriteAt(p []byte, off int64) (int, error) {
 	return len(p), nil
 }
 
-func newTestWorker(backend Backend, depth uint16, bufSize int) *worker {
+func newTestWorker(backend Backend) *worker {
+	const depth = 1
+	const bufSize = 4096
 	w := &worker{
 		dev:     &Device{backend: backend},
 		depth:   depth,
@@ -46,17 +48,16 @@ func newTestWorker(backend Backend, depth uint16, bufSize int) *worker {
 	return w
 }
 
-func (w *worker) setDesc(tag uint16, desc ioDesc) {
-	off := uintptr(tag) * sizeofIODesc
-	*(*ioDesc)(unsafe.Pointer(&w.ioDescs[off])) = desc
+func (w *worker) setDesc(desc ioDesc) {
+	*(*ioDesc)(unsafe.Pointer(&w.ioDescs[0])) = desc
 }
 
 func TestWorkerHandleIOUnsupportedOp(t *testing.T) {
 	t.Parallel()
 
 	backend := &stubBackend{}
-	w := newTestWorker(backend, 1, 4096)
-	w.setDesc(0, ioDesc{
+	w := newTestWorker(backend)
+	w.setDesc(ioDesc{
 		OpFlags:   0xFF,
 		NrSectors: 8,
 	})
@@ -82,18 +83,20 @@ func TestWorkerHandleIOZeroLength(t *testing.T) {
 		{name: "write", op: opWrite},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			backend := &stubBackend{
-				readAt: func(p []byte, off int64) (int, error) {
+				readAt: func(_ []byte, _ int64) (int, error) {
 					t.Fatal("ReadAt should not be called for zero-length read")
 					return 0, nil
 				},
-				writeAt: func(p []byte, off int64) (int, error) {
+				writeAt: func(_ []byte, _ int64) (int, error) {
 					t.Fatal("WriteAt should not be called for zero-length write")
 					return 0, nil
 				},
 			}
-			w := newTestWorker(backend, 1, 4096)
-			w.setDesc(0, ioDesc{OpFlags: tc.op, NrSectors: 0, StartSector: 11})
+			w := newTestWorker(backend)
+			w.setDesc(ioDesc{OpFlags: tc.op, NrSectors: 0, StartSector: 11})
 
 			if got := w.handleIO(0); got != 0 {
 				t.Fatalf("handleIO() = %d, want 0", got)
@@ -109,8 +112,8 @@ func TestWorkerHandleIOTooLarge(t *testing.T) {
 	t.Parallel()
 
 	backend := &stubBackend{}
-	w := newTestWorker(backend, 1, 4096)
-	w.setDesc(0, ioDesc{
+	w := newTestWorker(backend)
+	w.setDesc(ioDesc{
 		OpFlags:   opRead,
 		NrSectors: uint32(4096/512 + 1),
 	})
@@ -134,8 +137,8 @@ func TestWorkerHandleIOShortRead(t *testing.T) {
 			return len(p) - 512, nil
 		},
 	}
-	w := newTestWorker(backend, 1, 4096)
-	w.setDesc(0, ioDesc{OpFlags: opRead, NrSectors: 8, StartSector: 3})
+	w := newTestWorker(backend)
+	w.setDesc(ioDesc{OpFlags: opRead, NrSectors: 8, StartSector: 3})
 
 	if got := w.handleIO(0); got != -int32(unix.EIO) {
 		t.Fatalf("handleIO() = %d, want -EIO", got)
@@ -160,9 +163,9 @@ func TestWorkerHandleIOShortWrite(t *testing.T) {
 			return len(p) - 512, nil
 		},
 	}
-	w := newTestWorker(backend, 1, 4096)
+	w := newTestWorker(backend)
 	copy(w.bufs[0], want)
-	w.setDesc(0, ioDesc{OpFlags: opWrite, NrSectors: 8, StartSector: 9})
+	w.setDesc(ioDesc{OpFlags: opWrite, NrSectors: 8, StartSector: 9})
 
 	if got := w.handleIO(0); got != -int32(unix.EIO) {
 		t.Fatalf("handleIO() = %d, want -EIO", got)
@@ -190,12 +193,12 @@ func TestWorkerHandleIOReadError(t *testing.T) {
 	t.Parallel()
 
 	backend := &stubBackend{
-		readAt: func(p []byte, off int64) (int, error) {
+		readAt: func(_ []byte, _ int64) (int, error) {
 			return 0, io.EOF
 		},
 	}
-	w := newTestWorker(backend, 1, 4096)
-	w.setDesc(0, ioDesc{OpFlags: opRead, NrSectors: 8})
+	w := newTestWorker(backend)
+	w.setDesc(ioDesc{OpFlags: opRead, NrSectors: 8})
 
 	if got := w.handleIO(0); got != -int32(unix.EIO) {
 		t.Fatalf("handleIO() = %d, want -EIO", got)
