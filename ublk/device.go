@@ -217,23 +217,25 @@ func (d *Device) Close() (retErr error) {
 }
 
 func (d *Device) shutdown() error {
-	// Stop the device; this causes the kernel to complete pending FETCH_REQ
-	// with -ENODEV, which makes the workers exit.
+	// Stop the device; transitions state to DEAD.
+	// May fail if device was never started (already DEAD), which is fine.
 	_ = d.stopDev()
 
-	// Wait for all workers to finish.
+	// Delete the device. The kernel cancels all pending FETCH_REQ,
+	// which unblocks workers waiting in waitCQE.
+	// Must happen BEFORE wg.Wait — otherwise workers hang forever
+	// if startDev failed and stopDev was a no-op.
+	var err error
+	if d.id >= 0 {
+		err = d.delDev()
+	}
+
 	d.wg.Wait()
 
 	if d.charFD >= 0 {
 		_ = unix.Close(d.charFD)
 		d.charFD = -1
 	}
-
-	var err error
-	if d.id >= 0 {
-		err = d.delDev()
-	}
-
 	if d.ctrlRing != nil {
 		_ = d.ctrlRing.close()
 		d.ctrlRing = nil

@@ -17,8 +17,6 @@ const (
 
 	ioringEnterGetevents = 1 << 0
 
-	iosqeFixedFile = 1 << 0
-
 	ioringOffSQRing = 0x00000000
 	ioringOffCQRing = 0x08000000
 	ioringOffSQEs   = 0x10000000

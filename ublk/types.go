@@ -137,6 +137,4 @@ type paramZoned struct {
 var (
 	sizeofDevInfo = unsafe.Sizeof(devInfo{})
 	sizeofIODesc  = unsafe.Sizeof(ioDesc{})
-	sizeofCtrlCmd = unsafe.Sizeof(ctrlCmd{})
-	sizeofIOCmd   = unsafe.Sizeof(ioCmd{})
 )

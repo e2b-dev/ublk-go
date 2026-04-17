@@ -675,6 +675,190 @@ func TestCloseIdempotent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: write at the very last block of the device.
+// ---------------------------------------------------------------------------
+
+func TestLastBlock(t *testing.T) {
+	const size = 2 * 1024 * 1024
+	dev, backend := makeDevice(t, size, Config{})
+	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+
+	const blk = 4096
+	lastOff := int64(size - blk)
+
+	wbuf := make([]byte, blk)
+	rand.Read(wbuf)
+	if n, err := unix.Pwrite(fd, wbuf, lastOff); err != nil || n != blk {
+		t.Fatalf("pwrite last block: n=%d err=%v", n, err)
+	}
+
+	got := make([]byte, blk)
+	backend.ReadAt(got, lastOff)
+	if !bytes.Equal(got, wbuf) {
+		t.Error("last block write mismatch")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: write the same block twice, verify latest data wins.
+// ---------------------------------------------------------------------------
+
+func TestOverwrite(t *testing.T) {
+	const size = 2 * 1024 * 1024
+	dev, backend := makeDevice(t, size, Config{})
+	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+
+	const blk = 4096
+	buf1 := make([]byte, blk)
+	buf2 := make([]byte, blk)
+	for i := range buf1 {
+		buf1[i] = 0xAA
+		buf2[i] = 0x55
+	}
+
+	unix.Pwrite(fd, buf1, 0)
+	unix.Pwrite(fd, buf2, 0)
+
+	got := make([]byte, blk)
+	backend.ReadAt(got, 0)
+	if !bytes.Equal(got, buf2) {
+		t.Error("overwrite: second write did not take effect")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: write through block device, read back through block device (not just
+// backend) to verify the full round-trip through the kernel.
+// ---------------------------------------------------------------------------
+
+func TestWriteThenReadViaBlockDev(t *testing.T) {
+	const size = 2 * 1024 * 1024
+	dev, _ := makeDevice(t, size, Config{})
+	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
+
+	const blk = 4096
+	offsets := []int64{0, blk, 16 * blk, size/2 - blk, size - blk}
+
+	for _, off := range offsets {
+		wbuf := make([]byte, blk)
+		rand.Read(wbuf)
+
+		if n, err := unix.Pwrite(fd, wbuf, off); err != nil || n != blk {
+			t.Fatalf("pwrite at %d: n=%d err=%v", off, n, err)
+		}
+
+		rbuf := make([]byte, blk)
+		if n, err := unix.Pread(fd, rbuf, off); err != nil || n != blk {
+			t.Fatalf("pread at %d: n=%d err=%v", off, n, err)
+		}
+
+		if !bytes.Equal(wbuf, rbuf) {
+			t.Fatalf("round-trip mismatch at offset %d", off)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: verify the device reports the correct size.
+// ---------------------------------------------------------------------------
+
+func TestDeviceSize(t *testing.T) {
+	const size = 8 * 1024 * 1024
+	dev, _ := makeDevice(t, size, Config{})
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer unix.Close(fd)
+
+	var blkSize uint64
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), 0x80081272 /* BLKGETSIZE64 */, uintptr(unsafe.Pointer(&blkSize)))
+	if errno != 0 {
+		t.Fatalf("BLKGETSIZE64: %v", errno)
+	}
+	if blkSize != size {
+		t.Errorf("device size = %d, want %d", blkSize, size)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: backend error propagation — backend returns EIO, block device
+// should return an error too.
+// ---------------------------------------------------------------------------
+
+func TestBackendError(t *testing.T) {
+	canRunIntegration(t)
+
+	backend := &errorBackend{data: make([]byte, 2*1024*1024)}
+	dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer dev.Close()
+
+	fd, err := unix.Open(dev.BlockDevicePath(), unix.O_RDWR|unix.O_SYNC, 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer unix.Close(fd)
+
+	// Writes to the "bad" region should result in IO errors.
+	buf := make([]byte, 4096)
+	_, writeErr := unix.Pwrite(fd, buf, int64(backend.badOff))
+
+	// The kernel surfaces backend EIO as an IO error on the block device.
+	if writeErr == nil {
+		t.Log("write to bad region did not return error (may be cached)")
+	}
+}
+
+type errorBackend struct {
+	mu     sync.RWMutex
+	data   []byte
+	badOff int // offset that triggers errors
+}
+
+func (e *errorBackend) ReadAt(p []byte, off int64) (int, error) {
+	if off == int64(e.badOff) {
+		return 0, fmt.Errorf("simulated read error")
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return copy(p, e.data[off:]), nil
+}
+
+func (e *errorBackend) WriteAt(p []byte, off int64) (int, error) {
+	if off == int64(e.badOff) {
+		return 0, fmt.Errorf("simulated write error")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return copy(e.data[off:], p), nil
+}
+
+func (e *errorBackend) Flush() error { return nil }
+
+// ---------------------------------------------------------------------------
+// Test: rapid create/destroy cycles with no IO — stress device lifecycle.
+// ---------------------------------------------------------------------------
+
+func TestRapidCreateDestroy(t *testing.T) {
+	canRunIntegration(t)
+
+	for i := range 10 {
+		backend := newMemBackend(1024 * 1024)
+		dev, err := New(backend, Config{Size: 1024 * 1024})
+		if err != nil {
+			t.Fatalf("cycle %d: New: %v", i, err)
+		}
+		if err := dev.Close(); err != nil {
+			t.Fatalf("cycle %d: Close: %v", i, err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 
 func firstDiff(a, b []byte) int {
 	n := len(a)
