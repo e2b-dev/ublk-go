@@ -182,6 +182,11 @@ func churn(ctx context.Context, _ int) summary {
 // Start N concurrent writer goroutines hammering the block device, then
 // call Close mid-stream. Races between worker shutdown and in-flight
 // I/O surface here.
+//
+// Main owns the writer fds so we can force any stuck Pwrite to error
+// out by closing the fd from outside; if a writer goroutine fails to
+// exit within the watchdog timeout, we log and move on (and dump
+// goroutines via SIGQUIT-style panic if the whole test stalls too long).
 func ioWhileClose(ctx context.Context, workers int) summary {
 	var sm summary
 	for ctx.Err() == nil {
@@ -192,37 +197,54 @@ func ioWhileClose(ctx context.Context, workers int) summary {
 		}
 		path := dev.BlockDevicePath()
 
-		var wg sync.WaitGroup
-		stopper := make(chan struct{})
+		// Pre-open all fds so main can close them later to unblock stuck
+		// syscalls. Opening after device creation but before launching
+		// writers keeps the race window tight.
+		fds := make([]int, 0, workers)
 		for range workers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				fd, err := unix.Open(path, unix.O_WRONLY, 0)
-				if err != nil {
-					return
-				}
-				defer unix.Close(fd)
-				buf := make([]byte, blkSize)
-				for {
-					select {
-					case <-stopper:
-						return
-					default:
-					}
-					off := randOffset(devSize - blkSize)
-					_, _ = unix.Pwrite(fd, buf, off)
-				}
-			}()
+			fd, err := unix.Open(path, unix.O_WRONLY, 0)
+			if err != nil {
+				continue
+			}
+			fds = append(fds, fd)
 		}
 
-		// Let I/O run for a short variable window then close mid-stream.
+		var wg sync.WaitGroup
+		for _, fd := range fds {
+			wg.Add(1)
+			go func(fd int) {
+				defer wg.Done()
+				buf := make([]byte, blkSize)
+				for {
+					off := randOffset(devSize - blkSize)
+					if _, err := unix.Pwrite(fd, buf, off); err != nil {
+						// fd closed by main or device gone — either way, exit.
+						return
+					}
+				}
+			}(fd)
+		}
+
 		time.Sleep(jitter(2*time.Millisecond, 20*time.Millisecond))
 		if err := dev.Close(); err != nil {
 			sm.closeErrs++
 		}
-		close(stopper)
-		wg.Wait()
+
+		// Force any writer blocked mid-Pwrite to return EBADF.
+		for _, fd := range fds {
+			_ = unix.Close(fd)
+		}
+
+		// Safety watchdog: if wg.Wait doesn't return quickly, something
+		// is genuinely stuck. Abandon this iteration rather than hang
+		// the whole stress run; note it so the user sees it.
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			sm.closeErrs++ // counted as anomaly; surfaces in summary
+		}
 		sm.iterations++
 	}
 	return sm
@@ -269,46 +291,42 @@ func manyDevices(ctx context.Context, parallel int) summary {
 	var sm summary
 	for ctx.Err() == nil {
 		devs := make([]*ublk.Device, 0, parallel)
+		fds := make([]int, 0, parallel)
 		for range parallel {
 			d, err := ublk.New(newMemBackend(), devSize)
 			if err != nil {
 				sm.ioErrors++
 				continue
 			}
+			fd, err := unix.Open(d.BlockDevicePath(), unix.O_WRONLY, 0)
+			if err != nil {
+				_ = d.Close()
+				sm.ioErrors++
+				continue
+			}
 			devs = append(devs, d)
+			fds = append(fds, fd)
 		}
 		if len(devs) == 0 {
 			continue
 		}
 
-		// Per-device background writer.
-		stopper := make(chan struct{})
 		var wwg sync.WaitGroup
-		for _, d := range devs {
+		for _, fd := range fds {
 			wwg.Add(1)
-			go func(path string) {
+			go func(fd int) {
 				defer wwg.Done()
-				fd, err := unix.Open(path, unix.O_WRONLY, 0)
-				if err != nil {
-					return
-				}
-				defer unix.Close(fd)
 				buf := make([]byte, blkSize)
 				for {
-					select {
-					case <-stopper:
+					if _, err := unix.Pwrite(fd, buf, randOffset(devSize-blkSize)); err != nil {
 						return
-					default:
 					}
-					_, _ = unix.Pwrite(fd, buf, randOffset(devSize-blkSize))
 				}
-			}(d.BlockDevicePath())
+			}(fd)
 		}
 
 		time.Sleep(jitter(5*time.Millisecond, 30*time.Millisecond))
 
-		// Close devices in parallel — if there's any kernel lock we
-		// hold too aggressively, this is when it shows up.
 		var cwg sync.WaitGroup
 		for _, d := range devs {
 			cwg.Add(1)
@@ -320,8 +338,19 @@ func manyDevices(ctx context.Context, parallel int) summary {
 			}(d)
 		}
 		cwg.Wait()
-		close(stopper)
-		wwg.Wait()
+
+		for _, fd := range fds {
+			_ = unix.Close(fd)
+		}
+
+		// Watchdog same as ioWhileClose.
+		done := make(chan struct{})
+		go func() { wwg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			sm.closeErrs++
+		}
 		sm.iterations++
 	}
 	return sm
