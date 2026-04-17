@@ -98,10 +98,11 @@ var (
 
 // Ring is an io_uring instance.
 type Ring struct {
-	fd        int
-	p         params
-	sqeSize   uintptr
-	cancelled int32
+	fd       int
+	cancelFD int // eventfd used to wake WaitCQE
+	epollFD  int
+	p        params
+	sqeSize  uintptr
 
 	sqHead, sqTail, sqMask, sqFlags *uint32
 	sqArray                         unsafe.Pointer
@@ -141,6 +142,8 @@ func setup(entries, flags uint32, sqeSz uintptr) (*Ring, error) {
 
 	r := &Ring{
 		fd:        int(fd),
+		cancelFD:  -1,
+		epollFD:   -1,
 		p:         p,
 		sqeSize:   sqeSz,
 		sqEntries: p.SQEntries,
@@ -152,7 +155,35 @@ func setup(entries, flags uint32, sqeSz uintptr) (*Ring, error) {
 		return nil, err
 	}
 
+	if err := r.setupCancel(); err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+
 	return r, nil
+}
+
+func (r *Ring) setupCancel() error {
+	efd, err := unix.Eventfd(0, unix.EFD_CLOEXEC)
+	if err != nil {
+		return fmt.Errorf("eventfd: %w", err)
+	}
+	r.cancelFD = efd
+
+	epfd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
+	if err != nil {
+		return fmt.Errorf("epoll_create1: %w", err)
+	}
+	r.epollFD = epfd
+
+	for _, fd := range []int{r.fd, r.cancelFD} {
+		err := unix.EpollCtl(r.epollFD, unix.EPOLL_CTL_ADD, fd,
+			&unix.EpollEvent{Events: unix.EPOLLIN, Fd: int32(fd)})
+		if err != nil {
+			return fmt.Errorf("epoll_ctl: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *Ring) mmapRings() error {
@@ -204,9 +235,12 @@ func (r *Ring) mmapRings() error {
 // SQEntries returns the SQ size.
 func (r *Ring) SQEntries() uint32 { return r.sqEntries }
 
-// Cancel makes WaitCQE return on the next poll cycle.
+// Cancel wakes any WaitCQE blocked in epoll_wait.
 func (r *Ring) Cancel() {
-	atomic.StoreInt32(&r.cancelled, 1)
+	if r.cancelFD >= 0 {
+		var v uint64 = 1
+		_, _ = unix.Write(r.cancelFD, (*[8]byte)(unsafe.Pointer(&v))[:])
+	}
 }
 
 // Close releases all ring resources.
@@ -219,11 +253,13 @@ func (r *Ring) Close() error {
 			}
 		}
 	}
-	if r.fd >= 0 {
-		if err := unix.Close(r.fd); err != nil {
-			errs = append(errs, err)
+	for _, fd := range []*int{&r.epollFD, &r.cancelFD, &r.fd} {
+		if *fd >= 0 {
+			if err := unix.Close(*fd); err != nil {
+				errs = append(errs, err)
+			}
+			*fd = -1
 		}
-		r.fd = -1
 	}
 	return errors.Join(errs...)
 }
@@ -317,6 +353,7 @@ func (r *Ring) SubmitAndWait() (int, error) {
 
 // WaitCQE blocks until a CQE is available or the ring is cancelled.
 func (r *Ring) WaitCQE() (*CQE, error) {
+	var events [2]unix.EpollEvent
 	for {
 		head := atomic.LoadUint32(r.cqHead)
 		tail := atomic.LoadUint32(r.cqTail)
@@ -325,13 +362,15 @@ func (r *Ring) WaitCQE() (*CQE, error) {
 			return (*CQE)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize)), nil
 		}
 
-		if atomic.LoadInt32(&r.cancelled) != 0 {
-			return nil, fmt.Errorf("ring cancelled")
+		n, err := unix.EpollWait(r.epollFD, events[:], -1)
+		if err != nil && err != unix.EINTR {
+			return nil, fmt.Errorf("epoll_wait: %w", err)
 		}
-
-		// Poll with 100ms timeout so Cancel() can interrupt.
-		fds := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
-		unix.Poll(fds, 100)
+		for i := 0; i < n; i++ {
+			if events[i].Fd == int32(r.cancelFD) {
+				return nil, fmt.Errorf("ring cancelled")
+			}
+		}
 	}
 }
 
