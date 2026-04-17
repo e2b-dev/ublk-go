@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration cover cover-html probe chain flushbench flushbench-race stress torture fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -26,12 +26,6 @@ cover:
 cover-html: cover
 	go tool cover -html=coverage/integration.out
 
-# End-to-end autonomous smoke test: create device, mkfs/mount/IO/umount/close.
-# Each step has a timeout so hangs surface as failures.
-probe:
-	go build -race -o /tmp/ublk-probe ./example/probe
-	sudo /tmp/ublk-probe
-
 # Chain two ublk devices in the same process (proxy -> storage) and
 # verify byte-exact data flow through both stacks.
 chain:
@@ -57,13 +51,6 @@ flushbench-race:
 stress:
 	go build -race -o /tmp/ublk-stress ./example/stress
 	sudo /tmp/ublk-stress -duration 30s
-
-# Randomised I/O torture: picks random (offset, length, direction)
-# tuples, maintains a shadow of expected device contents, fails on
-# first divergence. Catches data-integrity / offset / ordering bugs.
-torture:
-	go build -race -o /tmp/ublk-torture ./example/torture
-	sudo /tmp/ublk-torture -duration 30s -parallel 4
 
 # Fault injection: Backend returns EIO on a configurable fraction of
 # operations. Verifies errors propagate to userspace and Close still

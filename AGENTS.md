@@ -7,13 +7,18 @@ history. Keep it factual. Read this before diving in.
 ## How to verify the whole stack autonomously
 
 ```bash
-make probe           # sudo needed; per-step timeouts; exits non-zero on hang
+# The core integration suite — probe + torture are now Go tests in
+# ublk/integration_*_test.go, invoked by make test-integration.
+make test-integration
+
+# Standalone harnesses (still example/* binaries for now):
 make chain           # sudo needed; stacks two ublks (proxy -> storage)
 make stress          # sudo needed; race-detector stress (create/close churn, IO-while-close, etc.)
-make torture         # sudo needed; randomised I/O with shadow-buffer verification (fuzz-style)
 make fault           # sudo needed; Backend returns EIO; verifies errors propagate to userspace
 make sigkill         # sudo needed; child process killed mid-I/O; verifies kernel cleanup
 make flushbench      # sudo needed; microsecond trace of backend calls during flush operations
+
+# Torture long soak:  UBLK_TORTURE_DURATION=30m go test -tags=integration -run TestTortureRandomIO ...
 ```
 
 The probe (`example/probe/main.go`) exercises both sides of the stack:
