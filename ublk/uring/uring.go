@@ -1,4 +1,5 @@
-package ublk
+// Package uring provides a minimal pure-Go io_uring wrapper.
+package uring
 
 import (
 	"errors"
@@ -11,20 +12,18 @@ import (
 )
 
 const (
-	opUringCmd = 46
+	OpUringCmd = 46
 
-	ioringSetupSQE128 = 1 << 10
+	setupSQE128      = 1 << 10
+	enterGetevents   = 1 << 0
 
-	ioringEnterGetevents = 1 << 0
-
-	ioringOffSQRing = 0x00000000
-	ioringOffCQRing = 0x08000000
-	ioringOffSQEs   = 0x10000000
+	offSQRing = 0x00000000
+	offCQRing = 0x08000000
+	offSQEs   = 0x10000000
 )
 
-// sqe128 is a 128-byte SQE with 80 bytes for passthrough cmd data.
-// Used for control commands (ublksrv_ctrl_cmd is 32 bytes).
-type sqe128 struct {
+// SQE128 is a 128-byte submission queue entry with 80 bytes for cmd data.
+type SQE128 struct {
 	Opcode      uint8
 	Flags       uint8
 	Ioprio      uint16
@@ -40,9 +39,8 @@ type sqe128 struct {
 	Cmd         [80]byte
 }
 
-// sqe64 is a standard 64-byte SQE with 16 bytes for passthrough cmd data.
-// Used for IO commands (ublksrv_io_cmd is 16 bytes).
-type sqe64 struct {
+// SQE64 is a standard 64-byte submission queue entry with 16 bytes for cmd data.
+type SQE64 struct {
 	Opcode      uint8
 	Flags       uint8
 	Ioprio      uint16
@@ -58,13 +56,14 @@ type sqe64 struct {
 	Cmd         [16]byte
 }
 
-type cqe struct {
+// CQE is a 16-byte completion queue entry.
+type CQE struct {
 	UserData uint64
 	Res      int32
 	Flags    uint32
 }
 
-type uringParams struct {
+type params struct {
 	SQEntries    uint32
 	CQEntries    uint32
 	Flags        uint32
@@ -78,38 +77,27 @@ type uringParams struct {
 }
 
 type sqOffsets struct {
-	Head        uint32
-	Tail        uint32
-	RingMask    uint32
-	RingEntries uint32
-	Flags       uint32
-	Dropped     uint32
-	Array       uint32
-	Resv1       uint32
-	Resv2       uint64
+	Head, Tail, RingMask, RingEntries, Flags, Dropped, Array uint32
+	Resv1                                                    uint32
+	Resv2                                                    uint64
 }
 
 type cqOffsets struct {
-	Head        uint32
-	Tail        uint32
-	RingMask    uint32
-	RingEntries uint32
-	Overflow    uint32
-	Cqes        uint32
-	Flags       uint32
-	Resv1       uint32
-	Resv2       uint64
+	Head, Tail, RingMask, RingEntries, Overflow, Cqes, Flags uint32
+	Resv1                                                    uint32
+	Resv2                                                    uint64
 }
 
-const (
-	sqe128Size = unsafe.Sizeof(sqe128{})
-	sqe64Size  = unsafe.Sizeof(sqe64{})
-	cqeSize    = unsafe.Sizeof(cqe{})
+var (
+	sqe128Size = unsafe.Sizeof(SQE128{})
+	sqe64Size  = unsafe.Sizeof(SQE64{})
+	cqeSize    = unsafe.Sizeof(CQE{})
 )
 
-type ring struct {
+// Ring is an io_uring instance.
+type Ring struct {
 	fd      int
-	params  uringParams
+	p       params
 	sqeSize uintptr
 
 	sqHead, sqTail, sqMask, sqFlags *uint32
@@ -125,18 +113,18 @@ type ring struct {
 	mmapSQ, mmapCQ, mmapSQEs []byte
 }
 
-// newCtrlRing creates a ring with 128-byte SQEs for control commands.
-func newCtrlRing(entries uint32) (*ring, error) {
-	return setupRing(roundUp2(entries), ioringSetupSQE128, sqe128Size)
+// NewSQE128 creates a ring with 128-byte SQEs (for io_uring passthrough cmds > 16 bytes).
+func NewSQE128(entries uint32) (*Ring, error) {
+	return setup(roundUp2(entries), setupSQE128, sqe128Size)
 }
 
-// newIORing creates a ring with standard 64-byte SQEs for IO commands.
-func newIORing(entries uint32) (*ring, error) {
-	return setupRing(roundUp2(entries), 0, sqe64Size)
+// New creates a ring with standard 64-byte SQEs.
+func New(entries uint32) (*Ring, error) {
+	return setup(roundUp2(entries), 0, sqe64Size)
 }
 
-func setupRing(entries, flags uint32, sqeSz uintptr) (*ring, error) {
-	p := uringParams{Flags: flags}
+func setup(entries, flags uint32, sqeSz uintptr) (*Ring, error) {
+	p := params{Flags: flags}
 
 	fd, _, errno := syscall.Syscall(
 		unix.SYS_IO_URING_SETUP,
@@ -148,25 +136,25 @@ func setupRing(entries, flags uint32, sqeSz uintptr) (*ring, error) {
 		return nil, fmt.Errorf("io_uring_setup: %w", errno)
 	}
 
-	r := &ring{
+	r := &Ring{
 		fd:        int(fd),
-		params:    p,
+		p:         p,
 		sqeSize:   sqeSz,
 		sqEntries: p.SQEntries,
 		cqEntries: p.CQEntries,
 	}
 
 	if err := r.mmapRings(); err != nil {
-		_ = r.close()
+		_ = r.Close()
 		return nil, err
 	}
 
 	return r, nil
 }
 
-func (r *ring) mmapRings() error {
-	sq := r.params.SqOff
-	cq := r.params.CqOff
+func (r *Ring) mmapRings() error {
+	sq := r.p.SqOff
+	cq := r.p.CqOff
 
 	sqRingSize := int(sq.Array) + int(r.sqEntries)*4
 	cqRingSize := int(cq.Cqes) + int(r.cqEntries)*int(cqeSize)
@@ -174,19 +162,19 @@ func (r *ring) mmapRings() error {
 
 	var err error
 
-	r.mmapSQ, err = unix.Mmap(r.fd, ioringOffSQRing, sqRingSize,
+	r.mmapSQ, err = unix.Mmap(r.fd, offSQRing, sqRingSize,
 		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
 	if err != nil {
 		return fmt.Errorf("mmap SQ ring: %w", err)
 	}
 
-	r.mmapCQ, err = unix.Mmap(r.fd, ioringOffCQRing, cqRingSize,
+	r.mmapCQ, err = unix.Mmap(r.fd, offCQRing, cqRingSize,
 		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
 	if err != nil {
 		return fmt.Errorf("mmap CQ ring: %w", err)
 	}
 
-	r.mmapSQEs, err = unix.Mmap(r.fd, ioringOffSQEs, sqesSize,
+	r.mmapSQEs, err = unix.Mmap(r.fd, offSQEs, sqesSize,
 		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
 	if err != nil {
 		return fmt.Errorf("mmap SQEs: %w", err)
@@ -210,7 +198,11 @@ func (r *ring) mmapRings() error {
 	return nil
 }
 
-func (r *ring) close() error {
+// SQEntries returns the number of SQ entries.
+func (r *Ring) SQEntries() uint32 { return r.sqEntries }
+
+// Close releases all ring resources.
+func (r *Ring) Close() error {
 	var errs []error
 	for _, m := range [][]byte{r.mmapSQ, r.mmapCQ, r.mmapSQEs} {
 		if m != nil {
@@ -228,7 +220,7 @@ func (r *ring) close() error {
 	return errors.Join(errs...)
 }
 
-func (r *ring) nextSQE() unsafe.Pointer {
+func (r *Ring) nextSQE() unsafe.Pointer {
 	head := r.sqeLocalHead
 	tail := r.sqeLocalTail
 	if tail-head >= r.sqEntries {
@@ -243,34 +235,34 @@ func (r *ring) nextSQE() unsafe.Pointer {
 	return unsafe.Add(r.sqeBase, uintptr(idx)*r.sqeSize)
 }
 
-// getSQE128 returns a zeroed 128-byte SQE. Only valid on SQE128 rings.
-func (r *ring) getSQE128() *sqe128 {
+// GetSQE128 returns a zeroed 128-byte SQE, or nil if the SQ is full.
+func (r *Ring) GetSQE128() *SQE128 {
 	ptr := r.nextSQE()
 	if ptr == nil {
 		return nil
 	}
-	sqe := (*sqe128)(ptr)
-	*sqe = sqe128{}
+	sqe := (*SQE128)(ptr)
+	*sqe = SQE128{}
 	return sqe
 }
 
-// getSQE64 returns a zeroed 64-byte SQE. Only valid on standard rings.
-func (r *ring) getSQE64() *sqe64 {
+// GetSQE64 returns a zeroed 64-byte SQE, or nil if the SQ is full.
+func (r *Ring) GetSQE64() *SQE64 {
 	ptr := r.nextSQE()
 	if ptr == nil {
 		return nil
 	}
-	sqe := (*sqe64)(ptr)
-	*sqe = sqe64{}
+	sqe := (*SQE64)(ptr)
+	*sqe = SQE64{}
 	return sqe
 }
 
-func (r *ring) flushSQ() (uint32, error) {
+func (r *Ring) flushSQ() uint32 {
 	head := r.sqeLocalHead
 	tail := r.sqeLocalTail
 	count := tail - head
 	if count == 0 {
-		return 0, nil
+		return 0
 	}
 
 	mask := atomic.LoadUint32(r.sqMask)
@@ -281,13 +273,14 @@ func (r *ring) flushSQ() (uint32, error) {
 
 	atomic.StoreUint32(r.sqTail, tail)
 	r.sqeLocalHead = tail
-	return count, nil
+	return count
 }
 
-func (r *ring) submit() (int, error) {
-	count, err := r.flushSQ()
-	if err != nil || count == 0 {
-		return int(count), err
+// Submit flushes pending SQEs to the kernel.
+func (r *Ring) Submit() (int, error) {
+	count := r.flushSQ()
+	if count == 0 {
+		return 0, nil
 	}
 
 	ret, _, errno := syscall.Syscall6(
@@ -300,17 +293,13 @@ func (r *ring) submit() (int, error) {
 	return int(ret), nil
 }
 
-// submitAndWait submits pending SQEs and processes completions (task work).
-// This is equivalent to liburing's io_uring_submit_and_wait(ring, 0).
-func (r *ring) submitAndWait() (int, error) {
-	count, err := r.flushSQ()
-	if err != nil {
-		return 0, err
-	}
+// SubmitAndWait submits pending SQEs and processes task work (IORING_ENTER_GETEVENTS).
+func (r *Ring) SubmitAndWait() (int, error) {
+	count := r.flushSQ()
 
 	ret, _, errno := syscall.Syscall6(
 		unix.SYS_IO_URING_ENTER,
-		uintptr(r.fd), uintptr(count), 0, ioringEnterGetevents, 0, 0,
+		uintptr(r.fd), uintptr(count), 0, enterGetevents, 0, 0,
 	)
 	if errno != 0 {
 		return 0, fmt.Errorf("io_uring_enter submit+wait: %w", errno)
@@ -318,18 +307,19 @@ func (r *ring) submitAndWait() (int, error) {
 	return int(ret), nil
 }
 
-func (r *ring) waitCQE() (*cqe, error) {
+// WaitCQE blocks until a CQE is available and returns it.
+func (r *Ring) WaitCQE() (*CQE, error) {
 	for {
 		head := atomic.LoadUint32(r.cqHead)
 		tail := atomic.LoadUint32(r.cqTail)
 		if head != tail {
 			idx := head & atomic.LoadUint32(r.cqMask)
-			return (*cqe)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize)), nil
+			return (*CQE)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize)), nil
 		}
 
 		_, _, errno := syscall.Syscall6(
 			unix.SYS_IO_URING_ENTER,
-			uintptr(r.fd), 0, 1, ioringEnterGetevents, 0, 0,
+			uintptr(r.fd), 0, 1, enterGetevents, 0, 0,
 		)
 		if errno != 0 && errno != unix.EINTR {
 			return nil, fmt.Errorf("io_uring_enter wait: %w", errno)
@@ -337,17 +327,19 @@ func (r *ring) waitCQE() (*cqe, error) {
 	}
 }
 
-func (r *ring) peekCQE() *cqe {
+// PeekCQE returns the next CQE without blocking, or nil if none ready.
+func (r *Ring) PeekCQE() *CQE {
 	head := atomic.LoadUint32(r.cqHead)
 	tail := atomic.LoadUint32(r.cqTail)
 	if head == tail {
 		return nil
 	}
 	idx := head & atomic.LoadUint32(r.cqMask)
-	return (*cqe)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize))
+	return (*CQE)(unsafe.Add(r.cqeBase, uintptr(idx)*cqeSize))
 }
 
-func (r *ring) seenCQE() {
+// SeenCQE advances the CQ head by one.
+func (r *Ring) SeenCQE() {
 	atomic.AddUint32(r.cqHead, 1)
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,18 +34,18 @@ func TestKernelABI(t *testing.T) {
 	if unsafe.Sizeof(ioDesc{}) != 24 {
 		t.Fatalf("ioDesc is %d bytes, kernel expects 24", unsafe.Sizeof(ioDesc{}))
 	}
-	if unsafe.Sizeof(sqe128{}) != 128 {
-		t.Fatalf("sqe128 is %d bytes, kernel expects 128", unsafe.Sizeof(sqe128{}))
+	if unsafe.Sizeof(uring.SQE128{}) != 128 {
+		t.Fatalf("sqe128 is %d bytes, kernel expects 128", unsafe.Sizeof(uring.SQE128{}))
 	}
-	if unsafe.Sizeof(sqe64{}) != 64 {
-		t.Fatalf("sqe64 is %d bytes, kernel expects 64", unsafe.Sizeof(sqe64{}))
+	if unsafe.Sizeof(uring.SQE64{}) != 64 {
+		t.Fatalf("sqe64 is %d bytes, kernel expects 64", unsafe.Sizeof(uring.SQE64{}))
 	}
-	if unsafe.Sizeof(cqe{}) != 16 {
-		t.Fatalf("cqe is %d bytes, kernel expects 16 (not 32!)", unsafe.Sizeof(cqe{}))
+	if unsafe.Sizeof(uring.CQE{}) != 16 {
+		t.Fatalf("cqe is %d bytes, kernel expects 16 (not 32!)", unsafe.Sizeof(uring.CQE{}))
 	}
 
 	// sqe128.Cmd must be at byte 48 — that's where io_uring_sqe_cmd() reads.
-	var s sqe128
+	var s uring.SQE128
 	off := uintptr(unsafe.Pointer(&s.Cmd[0])) - uintptr(unsafe.Pointer(&s))
 	if off != 48 {
 		t.Fatalf("sqe128.Cmd at offset %d, kernel expects 48", off)
@@ -57,22 +58,22 @@ func TestKernelABI(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIoUringNOPRoundTrip(t *testing.T) {
-	r, err := newIORing(16)
+	r, err := uring.New(16)
 	if err != nil {
-		t.Fatalf("newIORing: %v", err)
+		t.Fatalf("uring.New: %v", err)
 	}
-	defer r.close()
+	defer r.Close()
 
 	for i := range 16 {
-		sqe := r.getSQE64()
+		sqe := r.GetSQE64()
 		if sqe == nil {
-			t.Fatalf("getSQE64 nil at %d", i)
+			t.Fatalf("GetSQE64 nil at %d", i)
 		}
 		sqe.Opcode = 0 // IORING_OP_NOP
 		sqe.UserData = uint64(i) + 1
 	}
 
-	n, err := r.submit()
+	n, err := r.Submit()
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestIoUringNOPRoundTrip(t *testing.T) {
 
 	seen := make(map[uint64]bool)
 	for range 16 {
-		c, err := r.waitCQE()
+		c, err := r.WaitCQE()
 		if err != nil {
 			t.Fatalf("waitCQE: %v", err)
 		}
@@ -90,7 +91,7 @@ func TestIoUringNOPRoundTrip(t *testing.T) {
 			t.Errorf("NOP returned %d", c.Res)
 		}
 		seen[c.UserData] = true
-		r.seenCQE()
+		r.SeenCQE()
 	}
 
 	for i := uint64(1); i <= 16; i++ {
@@ -106,33 +107,33 @@ func TestIoUringNOPRoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIoUringManyCycles(t *testing.T) {
-	r, err := newIORing(4)
+	r, err := uring.New(4)
 	if err != nil {
-		t.Fatalf("newIORing: %v", err)
+		t.Fatalf("uring.New: %v", err)
 	}
-	defer r.close()
+	defer r.Close()
 
 	for cycle := range 200 {
-		for i := range int(r.sqEntries) {
-			sqe := r.getSQE64()
+		for i := range int(r.SQEntries()) {
+			sqe := r.GetSQE64()
 			if sqe == nil {
-				t.Fatalf("cycle %d: getSQE64 nil at %d", cycle, i)
+				t.Fatalf("cycle %d: GetSQE64 nil at %d", cycle, i)
 			}
 			sqe.Opcode = 0
 			sqe.UserData = uint64(cycle*1000 + i)
 		}
-		if _, err := r.submit(); err != nil {
+		if _, err := r.Submit(); err != nil {
 			t.Fatalf("cycle %d: submit: %v", cycle, err)
 		}
-		for range r.sqEntries {
-			c, err := r.waitCQE()
+		for range r.SQEntries() {
+			c, err := r.WaitCQE()
 			if err != nil {
 				t.Fatalf("cycle %d: waitCQE: %v", cycle, err)
 			}
 			if c.Res != 0 {
 				t.Fatalf("cycle %d: NOP res=%d", cycle, c.Res)
 			}
-			r.seenCQE()
+			r.SeenCQE()
 		}
 	}
 }

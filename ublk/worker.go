@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"unsafe"
 
+	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
 )
 
@@ -13,7 +14,7 @@ type worker struct {
 	depth   uint16
 	bufSize int
 
-	ioRing  *ring
+	ioRing  *uring.Ring
 	ioDescs []byte
 	bufPool []byte
 	bufs    [][]byte
@@ -33,7 +34,7 @@ func newWorker(dev *Device, qid, depth uint16, bufSize int) *worker {
 func (w *worker) init() error {
 	var err error
 
-	w.ioRing, err = newIORing(uint32(w.depth))
+	w.ioRing, err = uring.New(uint32(w.depth))
 	if err != nil {
 		return err
 	}
@@ -62,14 +63,14 @@ func (w *worker) run(ready chan<- error) {
 	defer w.dev.wg.Done()
 	defer w.cleanup()
 
-	_, err := w.ioRing.submitAndWait()
+	_, err := w.ioRing.SubmitAndWait()
 	ready <- err
 	if err != nil {
 		return
 	}
 
 	for {
-		c, err := w.ioRing.waitCQE()
+		c, err := w.ioRing.WaitCQE()
 		if err != nil {
 			return
 		}
@@ -77,7 +78,7 @@ func (w *worker) run(ready chan<- error) {
 		for {
 			tag := uint16(c.UserData)
 			res := c.Res
-			w.ioRing.seenCQE()
+			w.ioRing.SeenCQE()
 
 			if res < 0 {
 				return
@@ -86,13 +87,13 @@ func (w *worker) run(ready chan<- error) {
 			result := w.handleIO(tag)
 			w.prepareCommitAndFetch(tag, result)
 
-			c = w.ioRing.peekCQE()
+			c = w.ioRing.PeekCQE()
 			if c == nil {
 				break
 			}
 		}
 
-		if _, err := w.ioRing.submit(); err != nil {
+		if _, err := w.ioRing.Submit(); err != nil {
 			return
 		}
 	}
@@ -166,11 +167,11 @@ func (w *worker) handleIO(tag uint16) int32 {
 }
 
 func (w *worker) prepareFetch(tag uint16) {
-	sqe := w.ioRing.getSQE64()
+	sqe := w.ioRing.GetSQE64()
 	if sqe == nil {
 		return
 	}
-	sqe.Opcode = opUringCmd
+	sqe.Opcode = uring.OpUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOFetchReq)
 	sqe.UserData = uint64(tag)
@@ -185,11 +186,11 @@ func (w *worker) prepareFetch(tag uint16) {
 }
 
 func (w *worker) prepareCommitAndFetch(tag uint16, result int32) {
-	sqe := w.ioRing.getSQE64()
+	sqe := w.ioRing.GetSQE64()
 	if sqe == nil {
 		return
 	}
-	sqe.Opcode = opUringCmd
+	sqe.Opcode = uring.OpUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOCommitAndFetchReq)
 	sqe.UserData = uint64(tag)
@@ -215,7 +216,7 @@ func (w *worker) cleanup() {
 		w.ioDescs = nil
 	}
 	if w.ioRing != nil {
-		_ = w.ioRing.close()
+		_ = w.ioRing.Close()
 		w.ioRing = nil
 	}
 }

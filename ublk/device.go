@@ -8,6 +8,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/e2b-dev/ublk-go/ublk/uring"
 	"golang.org/x/sys/unix"
 )
 
@@ -16,7 +17,7 @@ type Device struct {
 	id        int
 	ctrlFD    int
 	charFD    int
-	ctrlRing  *ring
+	ctrlRing  *uring.Ring
 	info      devInfo
 	backend   Backend
 	useIoctl  bool
@@ -31,7 +32,7 @@ func openDevice(backend Backend) (*Device, error) {
 		return nil, fmt.Errorf("open /dev/ublk-control: %w", err)
 	}
 
-	ctrlRing, err := newCtrlRing(4)
+	ctrlRing, err := uring.NewSQE128(4)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("create control ring: %w", err)
@@ -149,12 +150,12 @@ func (d *Device) delDev() error {
 
 // ctrlCommand submits a control command via io_uring passthrough.
 func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
-	sqe := d.ctrlRing.getSQE128()
+	sqe := d.ctrlRing.GetSQE128()
 	if sqe == nil {
 		return fmt.Errorf("control ring SQ full")
 	}
 
-	sqe.Opcode = opUringCmd
+	sqe.Opcode = uring.OpUringCmd
 	sqe.Fd = int32(d.ctrlFD)
 	sqe.Off = uint64(cmdOp)
 
@@ -162,17 +163,17 @@ func (d *Device) ctrlCommand(cmdOp uint32, cmd *ctrlCmd) error {
 	src := (*[unsafe.Sizeof(ctrlCmd{})]byte)(unsafe.Pointer(cmd))
 	copy(sqe.Cmd[:], src[:])
 
-	if _, err := d.ctrlRing.submit(); err != nil {
+	if _, err := d.ctrlRing.Submit(); err != nil {
 		return err
 	}
 
-	cqe, err := d.ctrlRing.waitCQE()
+	cqe, err := d.ctrlRing.WaitCQE()
 	if err != nil {
 		return err
 	}
 
 	res := cqe.Res
-	d.ctrlRing.seenCQE()
+	d.ctrlRing.SeenCQE()
 
 	if res < 0 {
 		return fmt.Errorf("ublk control cmd 0x%x: %w", cmdOp, syscall.Errno(-res))
@@ -223,7 +224,7 @@ func (d *Device) shutdown() error {
 	}
 
 	if d.ctrlRing != nil {
-		_ = d.ctrlRing.close()
+		_ = d.ctrlRing.Close()
 		d.ctrlRing = nil
 	}
 	if d.ctrlFD >= 0 {
