@@ -101,11 +101,12 @@ var (
 
 // Ring is an io_uring instance.
 type Ring struct {
-	fd       int
-	cancelFD int // eventfd used to wake WaitCQE
-	epollFD  int
-	p        params
-	sqeSize  uintptr
+	fd        int
+	cancelFD  int // eventfd used to wake WaitCQE from epoll_wait
+	epollFD   int
+	cancelled atomic.Bool // set by Cancel; checked by WaitCQE on every iteration
+	p         params
+	sqeSize   uintptr
 
 	sqHead, sqTail, sqMask, sqFlags *uint32
 	sqArray                         unsafe.Pointer
@@ -238,8 +239,13 @@ func (r *Ring) mmapRings() error {
 // SQEntries returns the SQ size.
 func (r *Ring) SQEntries() uint32 { return r.sqEntries }
 
-// Cancel wakes any WaitCQE blocked in epoll_wait.
+// Cancel makes all subsequent WaitCQE calls return ErrCancelled. It
+// sets a flag that WaitCQE checks on every iteration (so even a worker
+// processing a continuous stream of CQEs notices promptly), and also
+// writes to an eventfd to wake up a WaitCQE currently blocked in
+// epoll_wait. Safe to call concurrently with WaitCQE.
 func (r *Ring) Cancel() {
+	r.cancelled.Store(true)
 	if r.cancelFD >= 0 {
 		var v uint64 = 1
 		_, _ = unix.Write(r.cancelFD, (*[8]byte)(unsafe.Pointer(&v))[:])
@@ -356,9 +362,18 @@ func (r *Ring) SubmitAndWait() (int, error) {
 
 // WaitCQE blocks until a CQE is available or the ring is cancelled.
 // Returns ErrCancelled if Cancel was called.
+//
+// The cancel flag is checked at the top of every iteration — not just
+// inside epoll_wait — so a worker processing a continuous stream of
+// CQEs (kernel always leaves head != tail) still observes Cancel.
+// Without this, a busy worker can loop forever returning CQEs and
+// never observe the eventfd wake, leading to shutdown hangs.
 func (r *Ring) WaitCQE() (*CQE, error) {
 	var events [2]unix.EpollEvent
 	for {
+		if r.cancelled.Load() {
+			return nil, ErrCancelled
+		}
 		head := atomic.LoadUint32(r.cqHead)
 		tail := atomic.LoadUint32(r.cqTail)
 		if head != tail {

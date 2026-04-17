@@ -124,6 +124,38 @@ func TestCancelUnblocksWaitCQE(t *testing.T) {
 	}
 }
 
+// TestCancelObservedWithCQEReady guards against a regression where
+// WaitCQE would return a queued CQE without checking the cancel flag,
+// causing a busy worker to loop forever and shutdown to hang.
+func TestCancelObservedWithCQEReady(t *testing.T) {
+	t.Parallel()
+	r, err := New(4)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Close()
+
+	// Pre-populate the CQ with a NOP result so WaitCQE could return
+	// it without ever calling epoll_wait.
+	sqe := r.GetSQE64()
+	if sqe == nil {
+		t.Fatal("GetSQE64 nil")
+	}
+	sqe.Opcode = 0
+	sqe.UserData = 0x1234
+	if _, err := r.SubmitAndWait(); err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+
+	// Set cancel BEFORE calling WaitCQE. A correct implementation
+	// must prefer the cancel signal over the ready CQE.
+	r.Cancel()
+
+	if _, err := r.WaitCQE(); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("WaitCQE with ready CQE and cancel set: got %v, want ErrCancelled", err)
+	}
+}
+
 func TestPeekCQE(t *testing.T) {
 	t.Parallel()
 	r, err := New(4)

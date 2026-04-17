@@ -124,6 +124,22 @@ sudo dmesg | tail -40                                                         # 
   main goroutine can proceed to `START_DEV`. See the comments in
   `worker.run()`.
 
+## Ring.Cancel must be observable from the busy path
+
+`Ring.Cancel()` uses an eventfd/epoll wakeup to break a blocked
+`WaitCQE`. But `WaitCQE` has a fast-path that returns an already-queued
+CQE without ever calling `epoll_wait` — and under sustained I/O
+pressure the CQ is always non-empty when the worker re-enters
+`WaitCQE`. Without an additional cancel-flag check the worker never
+observes the cancel signal and `Device.shutdown` hangs forever.
+
+Fix (current): `Ring.cancelled` (atomic.Bool) set by `Cancel()`,
+checked at the top of every `WaitCQE` iteration. The eventfd+epoll
+setup stays — it handles the case where the CQ is empty and WaitCQE
+is blocked in epoll_wait. The regression test is
+`TestCancelObservedWithCQEReady` in `ublk/uring/uring_test.go`; do not
+remove it if you refactor WaitCQE.
+
 ## Shutdown sequencing (current, post data-race fixes)
 
 `Device.shutdown()` ordering matters:
