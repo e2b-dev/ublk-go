@@ -5,19 +5,14 @@ import "unsafe"
 // ublk driver UAPI constants from include/uapi/linux/ublk_cmd.h
 
 const (
-	opRead        = 0
-	opWrite       = 1
-	opFlush       = 2
-	opDiscard     = 3
-	opWriteZeroes = 5
+	opRead  = 0
+	opWrite = 1
 
 	flagCmdIoctlEncode = 1 << 6
 
 	maxQueueDepth = 4096
 
 	paramTypeBasic = 1 << 0
-
-	attrVolatileCache = 1 << 2
 )
 
 // Legacy control command numbers.

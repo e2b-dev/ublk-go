@@ -160,14 +160,6 @@ func (w *worker) handleIO(tag uint16) int32 {
 		}
 		return int32(n)
 
-	case opFlush:
-		if f, ok := w.dev.backend.(Flusher); ok {
-			if err := f.Flush(); err != nil {
-				return -int32(unix.EIO)
-			}
-		}
-		return 0
-
 	default:
 		return -int32(unix.EOPNOTSUPP)
 	}

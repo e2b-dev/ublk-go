@@ -154,11 +154,10 @@ func canRunIntegration(t *testing.T) {
 
 // memBackend is a concurrency-safe in-memory block device.
 type memBackend struct {
-	mu      sync.RWMutex
-	data    []byte
-	flushes atomic.Int64
-	writes  atomic.Int64
-	reads   atomic.Int64
+	mu     sync.RWMutex
+	data   []byte
+	writes atomic.Int64
+	reads  atomic.Int64
 }
 
 func newMemBackend(size int) *memBackend {
@@ -183,11 +182,6 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
 		return 0, io.ErrShortWrite
 	}
 	return copy(m.data[off:], p), nil
-}
-
-func (m *memBackend) Flush() error {
-	m.flushes.Add(1)
-	return nil
 }
 
 // snapshot returns a copy of the backend data for comparison.
@@ -463,31 +457,6 @@ func TestConcurrentMixedIO(t *testing.T) {
 	wg.Wait()
 	if n := errCount.Load(); n > 0 {
 		t.Errorf("%d IO errors under concurrent mixed load", n)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Test: fsync reaches the backend's Flush method.
-// ---------------------------------------------------------------------------
-
-func TestFsyncCallsBackendFlush(t *testing.T) {
-	const size = 4 * 1024 * 1024
-	dev, backend := makeDevice(t, size, Config{})
-
-	fd := openBlkDev(t, dev.BlockDevicePath(), unix.O_RDWR)
-
-	buf := make([]byte, 4096)
-	unix.Pwrite(fd, buf, 0)
-
-	before := backend.flushes.Load()
-
-	if err := unix.Fsync(fd); err != nil {
-		t.Fatalf("fsync: %v", err)
-	}
-
-	after := backend.flushes.Load()
-	if after <= before {
-		t.Errorf("fsync did not trigger Flush (before=%d after=%d)", before, after)
 	}
 }
 

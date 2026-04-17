@@ -13,12 +13,6 @@ type Backend interface {
 	WriteAt(p []byte, off int64) (n int, err error)
 }
 
-// Flusher may be optionally implemented by a Backend to handle FLUSH requests.
-type Flusher interface {
-	Flush() error
-}
-
-
 // Config configures a ublk block device.
 type Config struct {
 	// Size of the block device in bytes. Required; must be > 0 and a multiple of BlockSize.

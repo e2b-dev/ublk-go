@@ -101,16 +101,10 @@ func (d *Device) openCharDev() error {
 func (d *Device) setParams(size uint64, blockSize uint32, maxSectors uint32) error {
 	blockShift := trailingZeros32(blockSize)
 
-	var attrs uint32
-	if _, ok := d.backend.(Flusher); ok {
-		attrs |= attrVolatileCache
-	}
-
 	params := ublkParams{
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
 		Basic: paramBasic{
-			Attrs:           attrs,
 			LogicalBSShift:  blockShift,
 			PhysicalBSShift: blockShift,
 			IOOptShift:      blockShift,
