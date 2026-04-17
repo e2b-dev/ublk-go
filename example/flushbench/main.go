@@ -152,9 +152,11 @@ func run() error {
 	}
 	defer shell("umount", mp)
 
-	// Let the backend trace start fresh from here.
-	tr.t0 = time.Now()
-	log.Printf("--- mkfs+mount done; tracing starts now ---")
+	// Don't reset tr.t0 here — the worker goroutine is already running
+	// and reading t0; reassigning would race with it. The trace origin
+	// stays at main()'s start; timestamps include the ~tens of ms spent
+	// in mkfs/mount, which is actually informative.
+	log.Printf("--- mkfs+mount done; experiments start now ---")
 
 	// ---- experiment 1: write + fsync on that file ----
 	mark := time.Since(tr.t0)
