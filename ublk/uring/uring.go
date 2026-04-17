@@ -4,6 +4,7 @@ package uring
 import (
 	"errors"
 	"fmt"
+	"math/bits"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -14,8 +15,8 @@ import (
 const (
 	OpUringCmd = 46
 
-	setupSQE128      = 1 << 10
-	enterGetevents   = 1 << 0
+	setupSQE128    = 1 << 10
+	enterGetevents = 1 << 0
 
 	offSQRing = 0x00000000
 	offCQRing = 0x08000000
@@ -341,14 +342,8 @@ func (r *Ring) SeenCQE() {
 }
 
 func roundUp2(v uint32) uint32 {
-	if v == 0 {
+	if v <= 1 {
 		return 1
 	}
-	v--
-	v |= v >> 1
-	v |= v >> 2
-	v |= v >> 4
-	v |= v >> 8
-	v |= v >> 16
-	return v + 1
+	return 1 << bits.Len32(v-1)
 }

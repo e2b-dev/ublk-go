@@ -15,7 +15,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-
 func TestUblkStructSizes(t *testing.T) {
 	if unsafe.Sizeof(ctrlCmd{}) != 32 {
 		t.Fatalf("ctrlCmd is %d bytes, kernel expects 32", unsafe.Sizeof(ctrlCmd{}))
@@ -31,7 +30,6 @@ func TestUblkStructSizes(t *testing.T) {
 	}
 }
 
-
 func canRunIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
@@ -41,7 +39,6 @@ func canRunIntegration(t *testing.T) {
 		t.Skip("ublk_drv not loaded (run: sudo modprobe ublk_drv)")
 	}
 }
-
 
 type memBackend struct {
 	mu     sync.RWMutex
@@ -279,7 +276,6 @@ func TestConcurrentWriters(t *testing.T) {
 	}
 }
 
-
 func TestRepeatedCreateDestroy(t *testing.T) {
 	canRunIntegration(t)
 
@@ -309,7 +305,6 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 		}
 	}
 }
-
 
 func TestRandomIOVerified(t *testing.T) {
 	const size = 4 * 1024 * 1024
@@ -347,7 +342,6 @@ func TestRandomIOVerified(t *testing.T) {
 	}
 }
 
-
 func TestCloseIdempotent(t *testing.T) {
 	canRunIntegration(t)
 
@@ -371,7 +365,6 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
-
 func TestLastBlock(t *testing.T) {
 	const size = 2 * 1024 * 1024
 	dev, backend := makeDevice(t, size)
@@ -392,7 +385,6 @@ func TestLastBlock(t *testing.T) {
 		t.Error("last block write mismatch")
 	}
 }
-
 
 func TestOverwrite(t *testing.T) {
 	const size = 2 * 1024 * 1024
@@ -446,7 +438,6 @@ func TestWriteThenReadViaBlockDev(t *testing.T) {
 	}
 }
 
-
 func TestDeviceSize(t *testing.T) {
 	const size = 8 * 1024 * 1024
 	dev, _ := makeDevice(t, size)
@@ -466,7 +457,6 @@ func TestDeviceSize(t *testing.T) {
 		t.Errorf("device size = %d, want %d", blkSize, size)
 	}
 }
-
 
 func firstDiff(a, b []byte) int {
 	n := len(a)

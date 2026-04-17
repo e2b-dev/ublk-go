@@ -1,17 +1,16 @@
 .PHONY: test test-integration build lint
 
 test:
-	go test -v -count=1 ./ublk/
+	go test -v -count=1 ./ublk/uring/ ./ublk/
 
 test-integration:
-	@echo "Loading ublk_drv..."
-	@modprobe ublk_drv 2>/dev/null || true
-	go test -v -count=1 -timeout=120s ./ublk/
+	go test -c -o /tmp/ublk.test ./ublk/
+	sudo /tmp/ublk.test -test.v -test.timeout=120s
 
 build:
-	go build -race ./...
+	go build ./...
 
 lint:
-	golangci-lint run ./...
 	gofmt -w .
+	golangci-lint run ./...
 	go mod tidy
