@@ -66,53 +66,37 @@ jobs:
           mkdir -p coverage
           go test -v -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
       - name: Load ublk_drv kernel module
-        id: ublk_drv
-        continue-on-error: true
         run: |
           set -eux
-          # Try the fast path first: the module is almost certainly
-          # already in the kernel's cache on GH runners. Default
-          # ublks_max (64) is plenty — our integration suite runs at
-          # most ~10 devices concurrently. If modprobe fails, the
-          # continue-on-error + ::warning:: in the next step surfaces
-          # it clearly and we'll escalate from there.
           sudo modprobe ublk_drv
           ls -l /dev/ublk-control
       - name: Integration tests (coverage)
         run: |
-          if [ ! -e /dev/ublk-control ]; then
-            echo "::warning::ublk_drv is not available on this runner; integration tests skipped. Check the 'Load ublk_drv' step for details."
-            : > coverage/integration.out
-            exit 0
-          fi
+          set -eux
           go test -c -race -tags=integration -coverpkg=./ublk/... -o /tmp/ublk.test ./ublk/
           sudo /tmp/ublk.test -test.v -test.timeout=300s -test.coverprofile=coverage/integration.out
           sudo chmod 644 coverage/integration.out
       - name: Coverage summary
         if: matrix.arch == 'amd64'
         run: |
+          set -eu
           {
             echo "## Coverage"
             echo ""
             echo '```'
-            echo -n 'unit        '; go tool cover -func=coverage/unit.out        | tail -1
-            if [ -s coverage/integration.out ]; then
-              echo -n 'integration '; go tool cover -func=coverage/integration.out | tail -1
-            fi
+            echo -n 'unit        '; go tool cover -func=coverage/unit.out | tail -1
+            echo -n 'integration '; go tool cover -func=coverage/integration.out | tail -1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "---"
           go tool cover -func=coverage/unit.out | tail -1
-          if [ -s coverage/integration.out ]; then
-            go tool cover -func=coverage/integration.out | tail -1
-          fi
+          go tool cover -func=coverage/integration.out | tail -1
       - name: Render HTML coverage reports
         if: matrix.arch == 'amd64'
         run: |
-          go tool cover -html=coverage/unit.out -o coverage/unit.html
-          if [ -s coverage/integration.out ]; then
-            go tool cover -html=coverage/integration.out -o coverage/integration.html
-          fi
+          set -eu
+          go tool cover -html=coverage/unit.out        -o coverage/unit.html
+          go tool cover -html=coverage/integration.out -o coverage/integration.html
       - name: Upload coverage artifact (downloadable from the run page)
         if: matrix.arch == 'amd64'
         uses: actions/upload-artifact@v7.0.1
