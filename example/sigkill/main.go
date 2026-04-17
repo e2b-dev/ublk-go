@@ -207,19 +207,25 @@ func readReady(r io.Reader) (string, error) {
 	}
 }
 
-// waitGone polls for both the block and char device nodes to disappear,
-// returning an error if they don't within the deadline.
+// waitGone polls for both the block and char device nodes to disappear.
+//
+// The kernel's ublk_ch_release handler runs in a workqueue (async);
+// actual device-node removal happens some time after process exit.
+// On kernel 6.17 this can take ten-plus seconds under load. We give
+// it up to 30s before declaring a failure.
 func waitGone(blockPath string) error {
 	charPath := "/dev/ublkc" + strings.TrimPrefix(blockPath, "/dev/ublkb")
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		_, blkErr := os.Stat(blockPath)
 		_, chrErr := os.Stat(charPath)
 		if errors.Is(blkErr, os.ErrNotExist) && errors.Is(chrErr, os.ErrNotExist) {
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("device nodes still present 5s after SIGKILL: %s / /dev/ublkc%s",
+	return fmt.Errorf("device nodes still present 30s after SIGKILL: %s / /dev/ublkc%s "+
+		"(kernel ublk_ch_release workqueue stalled — not a ublk-go bug, but worth "+
+		"checking `dmesg` and `cat /proc/sys/kernel/workqueue/default_cpumask`)",
 		blockPath, strings.TrimPrefix(blockPath, "/dev/ublkb"))
 }

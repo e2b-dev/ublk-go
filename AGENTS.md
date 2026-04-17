@@ -124,6 +124,36 @@ sudo dmesg | tail -40                                                         # 
   main goroutine can proceed to `START_DEV`. See the comments in
   `worker.run()`.
 
+## Close the block-device fds before calling Device.Close
+
+The library's `Device.Close` issues `UBLK_CMD_DEL_DEV`, which is
+fundamentally `del_gendisk()` inside the kernel. `del_gendisk()` blocks
+until **all** open fds to `/dev/ublkbN` are released — this is standard
+block-device teardown semantics, not a ublk quirk.
+
+So: if a user opens `/dev/ublkbN` for their own I/O, they must
+`unix.Close(fd)` **before** calling `dev.Close()`. Otherwise `dev.Close`
+hangs indefinitely waiting for `del_gendisk`.
+
+This almost took us out twice — once as "sync got stuck during fsdemo",
+once as "ioWhileClose hangs". The fix in our test harnesses is to close
+user fds first, then call `Device.Close`. For users of the library,
+this needs to be documented clearly (README API section is a good
+place; not yet done).
+
+If someone wants a "force close even with open fds" behaviour in the
+library, the options are: (a) have the library track user fds — a
+major API change and leaky abstraction; (b) switch to
+`UBLK_CMD_DEL_DEV_ASYNC` (kernel 6.1+), which marks the device for
+deletion but returns immediately — `/dev/ublkbN` disappears later
+when the refcount drops. The async variant is a better default but
+changes Close's semantics (it no longer guarantees the node is gone
+on return). Not implemented; worth considering if users hit this.
+
+Same caveat applies to SIGKILL'd processes — the ublk_ch_release
+workqueue is async and can take 10+ seconds on kernel 6.17 to actually
+remove the device nodes, even though the process is already reaped.
+
 ## Ring.Cancel must be observable from the busy path
 
 `Ring.Cancel()` uses an eventfd/epoll wakeup to break a blocked

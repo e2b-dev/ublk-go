@@ -226,24 +226,35 @@ func ioWhileClose(ctx context.Context, workers int) summary {
 		}
 
 		time.Sleep(jitter(2*time.Millisecond, 20*time.Millisecond))
-		if err := dev.Close(); err != nil {
-			sm.closeErrs++
-		}
 
-		// Force any writer blocked mid-Pwrite to return EBADF.
+		// User fds MUST be closed before dev.Close(). Otherwise the
+		// library's delDev() triggers del_gendisk() which blocks
+		// indefinitely waiting for all refs on /dev/ublkbN to drop.
+		// This is standard Linux block-device semantics, not a ublk
+		// quirk. Closing fds here also unblocks any writer goroutines
+		// stuck mid-Pwrite (EBADF), so we drain them fast.
 		for _, fd := range fds {
 			_ = unix.Close(fd)
 		}
-
-		// Safety watchdog: if wg.Wait doesn't return quickly, something
-		// is genuinely stuck. Abandon this iteration rather than hang
-		// the whole stress run; note it so the user sees it.
 		done := make(chan struct{})
 		go func() { wg.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			sm.closeErrs++ // counted as anomaly; surfaces in summary
+			sm.closeErrs++
+		}
+
+		// Watchdog on dev.Close() too, so any future regression that
+		// causes it to block surfaces as an anomaly instead of a hang.
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- dev.Close() }()
+		select {
+		case err := <-closeDone:
+			if err != nil {
+				sm.closeErrs++
+			}
+		case <-time.After(5 * time.Second):
+			sm.closeErrs++
 		}
 		sm.iterations++
 	}
@@ -327,23 +338,11 @@ func manyDevices(ctx context.Context, parallel int) summary {
 
 		time.Sleep(jitter(5*time.Millisecond, 30*time.Millisecond))
 
-		var cwg sync.WaitGroup
-		for _, d := range devs {
-			cwg.Add(1)
-			go func(d *ublk.Device) {
-				defer cwg.Done()
-				if err := d.Close(); err != nil {
-					atomic.AddInt64(&sm.closeErrs, 1)
-				}
-			}(d)
-		}
-		cwg.Wait()
-
+		// Same ordering as ioWhileClose: close user fds first so
+		// del_gendisk() doesn't block waiting for them.
 		for _, fd := range fds {
 			_ = unix.Close(fd)
 		}
-
-		// Watchdog same as ioWhileClose.
 		done := make(chan struct{})
 		go func() { wwg.Wait(); close(done) }()
 		select {
@@ -351,6 +350,25 @@ func manyDevices(ctx context.Context, parallel int) summary {
 		case <-time.After(3 * time.Second):
 			sm.closeErrs++
 		}
+
+		var cwg sync.WaitGroup
+		for _, d := range devs {
+			cwg.Add(1)
+			go func(d *ublk.Device) {
+				defer cwg.Done()
+				closeDone := make(chan error, 1)
+				go func() { closeDone <- d.Close() }()
+				select {
+				case err := <-closeDone:
+					if err != nil {
+						atomic.AddInt64(&sm.closeErrs, 1)
+					}
+				case <-time.After(5 * time.Second):
+					atomic.AddInt64(&sm.closeErrs, 1)
+				}
+			}(d)
+		}
+		cwg.Wait()
 		sm.iterations++
 	}
 	return sm
