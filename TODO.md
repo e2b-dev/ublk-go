@@ -2,6 +2,48 @@
 
 Features and optimizations to add on top of the current minimal implementation.
 
+## Known kernel issues — NOT ublk-go bugs, but worth tracking
+
+### Kernel 6.17 ublk_drv leaks devices after SIGKILL
+
+**Observed on Ubuntu 25.10, kernel 6.17.0-7-generic (also 6.17.0-14 per
+upstream reports).** When a process holding a ublk device is killed
+(`SIGKILL`, or crashes mid-I/O), the kernel's `ublk_ch_release`
+workqueue does not reliably complete. Symptoms:
+
+- `/dev/ublkbN` and `/dev/ublkcN` nodes persist (observed ≥ 30 s, likely
+  until reboot).
+- Processes that had in-flight I/O on the device end up in uninterruptible
+  sleep (`D` state) and stay there.
+- `lsmod` shows ublk_drv refcount growing over a session, never dropping.
+- `/sys/module/ublk_drv/parameters/ublks_max` defaults to 64, so after
+  enough killed processes `ublk.New()` will start failing with ENOSPC
+  until reboot.
+
+Context: ublk_drv was substantially refactored in September 2025
+(commits 25c028aa7915, 97e8ba31b8f1, 225dc96f35af, b749965edda8 et al).
+Multiple regressions have been fixed in 6.18 stable. The specific
+cleanup path we observe hanging has not (as of 6.17.7) been tracked to
+a specific upstream report we could find.
+
+**What ublk-go does about it:** nothing. There's nothing userspace can
+do once the kernel has wedged. `Device.Close` works fine for normal
+shutdown. Ungraceful kills leave state only the kernel can reclaim.
+
+**What we should do next:**
+
+- [ ] Repro the hang in a minimal way (smaller than our stress suite),
+  enough to post a bug report to `linux-block@vger.kernel.org` /
+  Ming Lei. A simple Go program doing `SIGKILL` on a self-spawned
+  child running `ublk.New` + a Pwrite loop should suffice.
+- [ ] Track upstream fixes for ublk in 6.18 / 6.19 stable trees; when
+  a specific commit lands that changes `ublk_ch_release`, re-run
+  `make sigkill` on the new kernel and update AGENTS.md.
+- [ ] Consider making the library log a warning if it detects
+  `/sys/class/ublk-char/` already has N devices where N approaches
+  `ublks_max` — would give users actionable signal before `New()`
+  starts failing silently.
+
 ## Build
 
 ### CGO for kernel constants

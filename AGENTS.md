@@ -162,11 +162,41 @@ ungraceful kill" is distinct from and answerable: `make sigkill`
 checks this by attempting `ublk.New` in the parent after the child is
 SIGKILL'd. That succeeds — the kernel allocates new minor numbers
 independently of whether the old ones have been reclaimed. So even
-with leaked orphan device nodes, the parent process is unaffected.
+with leaked orphan device nodes, the parent process is unaffected,
+**until the kernel's `ublks_max` limit (default 64) is hit**.
 
 If you run tests enough times you'll accumulate a lot of stale ublkb*
 nodes. Reboot to clean them up (no manual fix known that works
 reliably).
+
+### Diagnostic commands when investigating this
+
+```bash
+# how many ublk minors are consumed vs the kernel's limit
+ls /sys/class/ublk-char/ | wc -l
+cat /sys/module/ublk_drv/parameters/ublks_max
+
+# module refcount (grows over a session, never shrinks if devices leak)
+lsmod | awk '$1 == "ublk_drv"'
+
+# find the stuck processes — they'll be in D (uninterruptible) state
+ps -eo pid,state,cmd | awk '$2 == "D"' | grep -i ublk
+
+# what kernel routine is a stuck process waiting on
+sudo cat /proc/<PID>/stack
+cat /proc/<PID>/wchan
+
+# recent ublk messages
+journalctl -k --since '5 minutes ago' | grep -i ublk
+```
+
+If `/proc/<PID>/stack` shows frames inside `ublk_ch_release` or
+`blk_mq_quiesce_queue` or similar, that's the smoking gun for the
+kernel-side hang. Take the output, report to linux-block mailing list
+(and cc: Ming Lei — `ming.lei@redhat.com`, the driver maintainer), and
+reboot the machine.
+
+See `TODO.md` for a planned upstream repro.
 
 ## Ring.Cancel must be observable from the busy path
 
