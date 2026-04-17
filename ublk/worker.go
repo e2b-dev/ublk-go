@@ -167,6 +167,9 @@ func (w *worker) handleIO(tag uint16) int32 {
 
 func (w *worker) prepareFetch(tag uint16) {
 	sqe := w.ioRing.getSQE64()
+	if sqe == nil {
+		return
+	}
 	sqe.Opcode = opUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOFetchReq)
@@ -183,6 +186,9 @@ func (w *worker) prepareFetch(tag uint16) {
 
 func (w *worker) prepareCommitAndFetch(tag uint16, result int32) {
 	sqe := w.ioRing.getSQE64()
+	if sqe == nil {
+		return
+	}
 	sqe.Opcode = opUringCmd
 	sqe.Fd = int32(w.dev.charFD)
 	sqe.Off = uint64(uIOCommitAndFetchReq)
