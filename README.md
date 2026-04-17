@@ -3,6 +3,7 @@
 [![CI](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/e2b-dev/ublk-go/branch/main/graph/badge.svg)](https://codecov.io/gh/e2b-dev/ublk-go)
 [![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > Coverage profiles are also uploaded as a `coverage` build artifact on
 > every CI run — open any workflow run → Artifacts → download to view
@@ -221,3 +222,7 @@ See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned dev
 - [Kernel ublk documentation](https://docs.kernel.org/block/ublk.html)
 - [ublksrv reference implementation](https://github.com/ublk-org/ublksrv)
 - [io_uring guide](https://unixism.net/loti/)
+
+## License
+
+[MIT](LICENSE) © 2026 e2b-dev
