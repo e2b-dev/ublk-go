@@ -455,14 +455,31 @@ func (p *probe) closeDevice() error {
 }
 
 func (p *probe) verifyGone() error {
+	// Derive /dev/ublkcN from /dev/ublkbN; they share the minor number
+	// from ublk's POV.
+	charPath := "/dev/ublkc" + p.devPath[len("/dev/ublkb"):]
+
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(p.devPath); errors.Is(err, os.ErrNotExist) {
+		_, blkErr := os.Stat(p.devPath)
+		_, chrErr := os.Stat(charPath)
+		if errors.Is(blkErr, os.ErrNotExist) && errors.Is(chrErr, os.ErrNotExist) {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return fmt.Errorf("%s still present after Close()", p.devPath)
+	blkState := describeStat(p.devPath)
+	chrState := describeStat(charPath)
+	return fmt.Errorf("leftover device nodes after Close(): %s (%s), %s (%s)",
+		p.devPath, blkState, charPath, chrState)
+}
+
+func describeStat(path string) string {
+	_, err := os.Stat(path)
+	if err == nil {
+		return "still exists"
+	}
+	return err.Error()
 }
 
 // --- helpers ---
