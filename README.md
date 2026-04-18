@@ -35,12 +35,6 @@ Pure Go library for Linux userspace block devices via the [ublk](https://docs.ke
 go get github.com/e2b-dev/ublk-go@latest
 ```
 
-Pin to a tagged release once there is one:
-
-```bash
-go get github.com/e2b-dev/ublk-go@v0.1.0
-```
-
 In code, import the subpackage:
 
 ```go
@@ -286,4 +280,4 @@ See [TODO.md](TODO.md) for planned features (zero-copy, user recovery, zoned dev
 
 ## License
 
-[Apache License 2.0](LICENSE) © 2026 e2b-dev
+[Apache License 2.0](LICENSE) © 2026 E2B
