@@ -2,6 +2,65 @@
 
 Features and optimizations to add on top of the current minimal implementation.
 
+## Reference implementations
+
+When picking up any of the items in this document, cross-reference these
+ublk implementations:
+
+- [`semistrict/go-ublk`](https://github.com/semistrict/go-ublk) — another
+  pure-Go ublk library. Covers multi-queue, USER_COPY mode, zero-copy with
+  auto-buf-reg, queue affinity pinning, GET_PARAMS / GET_FEATURES /
+  GET_QUEUE_AFFINITY, and an "easy" handler that adapts `io.ReaderAt`
+  plus optional `Flusher`/`Discarder`/`Zeroer` interfaces.
+- [SPDK ublk target](https://spdk.io/doc/ublk.html) — production C
+  implementation used by [Longhorn v2 data
+  engine](https://github.com/longhorn/longhorn/issues/9456). Validates
+  our `runtime.LockOSThread`-per-queue model: SPDK explicitly notes the
+  kernel constraint that "one ublk device queue can be only processed
+  in the context of system thread which initialized it". They pin one
+  spdk_thread per reactor and assign queues round-robin — same model
+  we'd land on for multi-queue.
+- [`PhanLe1010/libublk-rs (longhorn branch)`](https://github.com/PhanLe1010/libublk-rs/tree/longhorn) —
+  Rust PoC the Longhorn team built before settling on SPDK. Useful for
+  comparing how the Rust ecosystem models the FETCH/COMMIT lifecycle.
+- [`ublk-org/ublksrv`](https://github.com/ublk-org/ublksrv) — the
+  reference C implementation maintained alongside the kernel. Source of
+  truth for kernel-feature interaction patterns (BATCH_IO,
+  DEFER_TASKRUN, idle-buffer madvise, etc.).
+
+### Reference io_uring libraries (Go)
+
+We ship our own minimal `io_uring` wrapper in `ublk/uring/` rather than
+depending on a generic Go library. The reason is that ublk requires
+**128-byte SQEs (`IORING_SETUP_SQE128`)** and **`IORING_OP_URING_CMD`
+(opcode 46)** to carry the embedded `ublksrv_io_cmd` payload, and none
+of the popular Go ports expose both first-class. `semistrict/go-ublk`
+reached the same conclusion and also hand-rolled its own.
+
+That said, two Go ports are still worth using as **reference for ABI
+correctness** when binding new kernel features:
+
+- [`pawelgaczynski/giouring`](https://github.com/pawelgaczynski/giouring)
+  — most complete pure-Go port of `liburing`, naming maps almost 1:1 to
+  the C API. Best place to cross-check struct layouts and constants
+  (`io_uring_buf_ring`, `Probe`, `RsrcRegister`, etc.) before we add
+  things like zero-copy provided buffers.
+- [`godzie44/go-uring`](https://github.com/godzie44/go-uring) — closer
+  to a `liburing` port with reactor pattern; useful reference for the
+  Go memory-model discussion (`amd64_atomic` build tag, `seq_cst` vs
+  `acq_rel` analysis) if we ever profile and find atomics on the SQ/CQ
+  head/tail are a bottleneck.
+
+Other libraries we evaluated and ruled out for ublk:
+[`Iceber/iouring-go`](https://github.com/iceber/iouring-go) (most
+popular but networking-focused, 64-byte SQE only),
+[`ii64/gouring`](https://github.com/ii64/gouring) (also 64-byte SQE,
+no URING_CMD).
+
+**Action item:** whenever we touch `ublk/uring/uring.go` or the SQE128
+layout, cross-check struct offsets and any new opcodes against
+`giouring`'s definitions to catch ABI drift. Cheap insurance.
+
 ## Ungraceful-exit device leaks
 
 When our test harnesses (or any user program using the library) is
@@ -44,6 +103,98 @@ cleanup path may or may not be among them.
 - [ ] Optionally: warn in `ublk.New` if `/sys/class/ublk-char/` is
   approaching `ublks_max` (default 64). Gives users a signal before
   `New()` starts failing silently due to accumulated orphans.
+- [ ] Expose a `ublk.CleanupOrphans()` (or `ublkctl` CLI) that scans
+  `/sys/class/ublk-char/` and force-deletes leaked devices via
+  `/dev/ublk-control` `DEL_DEV[_ASYNC]`. This is exactly the pain point
+  Longhorn flags in
+  [issue #10738](https://github.com/longhorn/longhorn/issues/10738):
+  *"When instance manager pod crash, it might leave the orphan UBLK
+  device. Currently, it is difficult to remove these orphan UBLK devices
+  and sometime a reboot is needed."* — they have no userspace cleanup
+  path either, so a small Go helper that wraps DEL_DEV by ID would be
+  genuinely novel value vs. existing libraries (semistrict/SPDK don't
+  ship this either).
+
+## Robustness / kernel-ABI hygiene
+
+### Compute ioctl-encoded opcodes from `_IOR`/`_IOWR` macros
+
+We currently hardcode the ioctl-encoded ublk command opcodes in
+`ublk/types.go` (`uCmdAddDev = 0xC0207504`, etc.). The constant `0x20` in
+each value is `sizeof(struct ublksrv_ctrl_cmd) = 32`, baked into the
+ioctl encoding. If the kernel ever extends `ublksrv_ctrl_cmd` (the
+explicit `Reserved1`/`Reserved2` fields exist precisely so it can grow),
+the size shifts and our hardcoded opcodes silently become wrong while
+the kernel returns `EINVAL`.
+
+Mirror the pattern used by [`semistrict/go-ublk`](https://github.com/semistrict/go-ublk)
+in [`const.go`](https://github.com/semistrict/go-ublk/blob/main/const.go):
+define `ioc(dir, type, nr, size)` and derive each `uCmd*` /  `uIO*`
+opcode from `iowr(ublkType, nr, unsafe.Sizeof(ctrlCmd{}))`. Pure
+mechanical refactor; no behavior change today, future-proofs against
+struct extensions.
+
+### Handle non-read/non-write IO ops explicitly
+
+`worker.handleIO` currently returns `EOPNOTSUPP` for everything except
+`OP_READ`/`OP_WRITE`. We don't currently set `UBLK_ATTR_VOLATILE_CACHE`
+or `MaxDiscardSectors`, so the kernel block layer shouldn't emit
+`OP_FLUSH` / `OP_DISCARD` / `OP_WRITE_ZEROES` against us — but if a
+user touches the sysfs knobs (`echo 1 > .../discard_max_bytes`) or
+mounts a filesystem that issues unconditional flushes, they'll get
+unexplained EIO. Cheap fix when we add the optional backend interfaces:
+
+- `OP_FLUSH` (2) → `0` when no `Flusher`, otherwise call it
+- `OP_DISCARD` (3) → `0` (or call `Discarder` once exposed)
+- `OP_WRITE_ZEROES` (5) → `0` (or call `Zeroer`)
+
+Cross-ref: semistrict's `IOOp` enum in
+[`const.go`](https://github.com/semistrict/go-ublk/blob/main/const.go)
+and the `ReaderAtHandler` adapter in
+[`easy.go`](https://github.com/semistrict/go-ublk/blob/main/easy.go).
+
+### Async STOP_DEV pattern
+
+We currently issue STOP_DEV synchronously on the same control ring used
+for ADD/SET/DEL. That works because the kernel responds with the CQE
+once the worker thread releases the char fd (which we drive ourselves).
+Once we go multi-queue, the cleaner pattern (used by semistrict in
+[`ctrl.go`](https://github.com/semistrict/go-ublk/blob/main/ctrl.go)) is:
+
+1. Submit STOP_DEV without waiting → kernel injects ENODEV into pending
+   FETCHes for every queue.
+2. Wait for all per-queue serve goroutines to drain.
+3. *Then* wait for the STOP_DEV CQE.
+
+Keeps the abort signal symmetric across queues and avoids relying on
+char-fd close to drive the abort path.
+
+### Friendlier error when `ublk_drv` isn't loaded
+
+Today, opening `/dev/ublk-control` on a host without the module
+returns a bare `ENOENT` from `unix.Open`, which surfaces as a
+confusing `"open /dev/ublk-control: no such file or directory"`.
+Detect this case in `openDevice` and wrap it with a hint:
+
+> ublk control device not found; load the kernel module with
+> `modprobe ublk_drv` (requires Linux 6.0+ and CAP_SYS_ADMIN)
+
+Longhorn went so far as to ship dedicated CLI tooling
+([`longhornctl ... --enable-spdk`](https://github.com/longhorn/longhorn/issues/11803),
+[longhorn/cli PR #321](https://github.com/longhorn/cli/pull/321))
+just to auto-`modprobe` this on cluster nodes. We can't (and
+shouldn't) call modprobe from a library, but a clear pointer in
+the error message saves users a Google search.
+
+### Safety review note for contributors
+
+Document the unsafe-pointer discipline in the package: any address
+embedded in a SQE (`cmd.Addr`, buffer pointers in IO commands) must be
+either heap-anchored through a long-lived field or pinned via
+`runtime.Pinner` for the duration of the syscall. The bug we just fixed
+in `addDev`/`setParams` is the canonical example. See
+[semistrict's `ctrl.go`](https://github.com/semistrict/go-ublk/blob/main/ctrl.go)
+which uses `runtime.Pinner` consistently.
 
 ## Build
 
@@ -81,6 +232,39 @@ type WriteZeroer interface { WriteZeroes(off, length int64) error }
 
 Set `UBLK_ATTR_VOLATILE_CACHE` when backend implements `Flusher`, declare
 `MaxDiscardSectors` when it implements `Discarder`, etc.
+
+Cross-ref: semistrict's [`ReaderAtHandler`](https://github.com/semistrict/go-ublk/blob/main/easy.go)
+already implements this exact pattern (`Flusher`, `Syncer`, `Discarder`,
+`Zeroer`) with optional-interface assertion. Worth mirroring the API
+shape so users have a familiar surface.
+
+### Diagnostic / introspection commands
+
+Wire up the read-only control commands so callers can inspect device
+state without round-tripping through sysfs:
+
+- `UBLK_CMD_GET_DEV_INFO` / `GET_DEV_INFO2`
+- `UBLK_CMD_GET_PARAMS` (we currently only have SET_PARAMS)
+- `UBLK_CMD_GET_QUEUE_AFFINITY`
+- `UBLK_CMD_GET_FEATURES` (lets the library detect kernel capability
+  matrix at runtime instead of trial-and-error like our current
+  ioctl-encoded → legacy fallback in `addDev`)
+
+Cross-ref: semistrict implements all of these in
+[`ctrl.go`](https://github.com/semistrict/go-ublk/blob/main/ctrl.go) and
+[`affinity.go`](https://github.com/semistrict/go-ublk/blob/main/affinity.go).
+
+### Update size / quiesce / try-stop
+
+Newer ublk control commands worth surfacing once we have a stable
+multi-queue base:
+
+- `UBLK_U_CMD_UPDATE_SIZE` (`UBLK_F_UPDATE_SIZE`) — live device resize.
+- `UBLK_U_CMD_QUIESCE_DEV` (`UBLK_F_QUIESCE`) — pause IO for live
+  server upgrade.
+- `UBLK_U_CMD_TRY_STOP_DEV` (`UBLK_F_SAFE_STOP_DEV`) — only stop if no
+  openers (avoids the documented "leaked fd → Close hangs forever"
+  footgun without changing semantics the way DEL_DEV_ASYNC does).
 
 ### User Copy Mode
 
@@ -128,6 +312,7 @@ both submits SQEs and waits for the next CQE. The reference C implementation
 (ublksrv) uses `io_uring_submit_and_wait_timeout()` which does exactly this.
 
 Benefits:
+
 - Saves one syscall per IO iteration (currently Submit → epoll_wait → two
   kernel transitions)
 - Explicitly processes io_uring task work via GETEVENTS (currently relies on
