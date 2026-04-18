@@ -350,10 +350,12 @@ ulimit -n                                       # 65536+
 
 ## Data-plane details
 
-- `maxQueueDepth = 128`, `maxSectors = 256` (128 KiB max I/O). These are
-  hard-coded; changing them means re-running the full integration test
-  because buffer sizing, `ioDescs` mmap offset, and kernel param struct
-  all depend on the values.
+- `queueDepth = 128` (in `ublk.go`), `maxSectors = 256` (128 KiB max I/O).
+  These are hard-coded; changing them means re-running the full integration
+  test because buffer sizing and kernel param struct depend on the values.
+- `maxQueueDepth = 4096` (in `types.go`) is the kernel's `UBLK_MAX_QUEUE_DEPTH`
+  constant, used **only** for the mmap offset calculation when mapping IO
+  descriptors from the char device. It does not affect the actual queue depth.
 - The backend is called with a `[]byte` slice whose length already
   reflects the logical IO size (`nr_sectors * 512`). Don't re-clip.
 
@@ -402,3 +404,116 @@ GitHub's **Default Code Scanning setup** and our `codeql.yml` advanced
 workflow are mutually exclusive. If both are enabled, advanced runs fail
 with `Resource not accessible by integration` when uploading SARIF (the
 default setup owns that endpoint). Toggle one off in repo settings.
+
+## Reference implementations
+
+When cross-checking correctness or looking for features/optimizations,
+these are the canonical implementations to compare against. They were
+last audited in April 2026.
+
+### io_uring userspace libraries
+
+- **[axboe/liburing](https://github.com/axboe/liburing)** — The
+  canonical C library for io_uring, maintained by Jens Axboe (io_uring
+  author). Gold standard for memory barrier placement. Key files:
+  `src/queue.c` (SQ flush, CQ read, `sq_ring_needs_enter`),
+  `src/include/liburing/barrier.h` (barrier primitives).
+
+  Key learnings from auditing liburing:
+  - SQ tail store uses **release** semantics when SQPOLL is set, plain
+    store otherwise. Our `atomic.StoreUint32` is release (more
+    conservative but correct).
+  - Full `smp_mb()` barrier required between SQ tail write and reading
+    `IORING_SQ_NEED_WAKEUP` flag. Only relevant for SQPOLL mode (we
+    don't use it). See liburing issue #541 / commit 744f4156b25d.
+  - CQ head/tail reads use relaxed loads (`READ_ONCE`). Our atomic
+    loads are acquire (more conservative but correct).
+  - sqArray is pre-populated with identity mapping at setup time and
+    never written during flush. We write it every flush (harmless but
+    wasteful; see TODO.md "Pre-populate SQ array at setup").
+
+- **[tokio-rs/io-uring](https://github.com/tokio-rs/io-uring)** — Rust
+  io_uring bindings. Key files: `src/squeue.rs`, `src/cqueue.rs`,
+  `src/submit.rs`.
+
+  Key issue: **#197** — SeqCst fence race with SQPOLL. Without a
+  `fence(SeqCst)` between writing SQ tail and reading the NEED_WAKEUP
+  flag, the CPU can reorder operations causing a deadlock where work is
+  submitted but the kernel poll thread never wakes. Fixed by adding
+  `atomic::fence(SeqCst)` before `sq_need_wakeup()`. Not relevant to
+  us (no SQPOLL) but documents why the barrier is needed.
+
+  Key issue: **#302** — CQ overflow with `IORING_SETUP_CQ_NODROP`.
+  When CQ is full and NODROP is set, the kernel backs up entries.
+  Flushing them requires `io_uring_enter` with GETEVENTS. We don't use
+  NODROP, so overflow would silently drop CQEs. See TODO.md "CQ
+  overflow detection".
+
+### ublk userspace servers
+
+- **[ublk-org/ublksrv](https://github.com/ublk-org/ublksrv)** — The C
+  reference implementation maintained by Ming Lei (ublk kernel driver
+  author). Key files: `lib/ublksrv.c` (IO loop, queue management),
+  `lib/ublksrv_cmd.c` (control path).
+
+  Key patterns:
+  - Single-threaded per-queue design: one pthread per queue, no locks
+    on the hot path. Our Go equivalent is `runtime.LockOSThread()` per
+    worker goroutine.
+  - IO loop uses `io_uring_submit_and_wait_timeout()` — single syscall
+    for submit + wait. We use two syscalls (Submit + epoll_wait). See
+    TODO.md "Single-syscall IO loop".
+  - Idle detection: 20-second timeout → `madvise(MADV_DONTNEED)` on
+    buffers. See TODO.md "Idle buffer page discard".
+  - Batch IO mode (`UBLK_F_BATCH_IO`): multishot fetch + double-
+    buffered commits. See TODO.md "Batch IO mode".
+  - Issue #173: EINVAL on kernel 6.15+ from DevID mismatch between
+    `devInfo` and `ctrlCmd`. We already handle this correctly
+    (both set to `^uint32(0)`).
+  - Issue #63: "can't get sqe" on misconfigured liburing (needs
+    `IORING_SETUP_SQE128`). We handle this (control ring uses
+    `NewSQE128`).
+
+- **[ublk-org/rublk](https://github.com/ublk-org/rublk)** — Rust ublk
+  implementation (depends on libublk-rs crate). Key files: `src/loop.rs`,
+  `src/null.rs`, `src/qcow2.rs`.
+
+  Key learnings:
+  - PR #15 (open): Replace `unwrap()` panics in IO path with error
+    codes. Panicking in the IO handler crashes the daemon and leaves
+    the kernel device hanging forever. Our code correctly returns
+    `-EIO` from `handleIO` — we never panic.
+  - PR #14: Timeout CQEs mistakenly treated as IO task wakeups.
+    Demonstrates the importance of distinguishing internal events
+    from IO completions. Not relevant to us (we don't use timeouts
+    in the worker loop).
+  - PR #13: Batch eventfd notifications with a counter to reduce
+    syscalls. Our eventfd usage is limited to cancellation (one-shot),
+    so this optimization doesn't apply.
+  - PR #7: FLUSH operations in zero-copy mode need special handling.
+    Will be relevant when we implement Flusher + zero-copy.
+
+### Cross-reference audit results (April 2026)
+
+Our implementation was cross-referenced against all four repos. No
+correctness bugs were found. The implementation correctly handles:
+
+- Memory barriers for SQ/CQ ring management (Go's `atomic` package
+  provides release/acquire semantics on all platforms including ARM64)
+- DevID matching for kernel 6.17+ (`^uint32(0)` in both devInfo and
+  ctrlCmd)
+- FETCH_REQ task work processing (initial SubmitAndWait with GETEVENTS)
+- COMMIT_AND_FETCH without GETEVENTS in the worker loop (works because
+  we don't set `IORING_SETUP_DEFER_TASKRUN` — task work runs during
+  syscall return)
+- Error codes returned to kernel (no panics in IO path)
+- Shutdown sequencing (cancel → wait → cleanup → close charFD → stop →
+  del)
+
+Areas where we are more conservative than necessary (harmless):
+- `atomic.StoreUint32` for sqTail (release) — liburing uses plain store
+  without SQPOLL
+- `atomic.LoadUint32` for cqHead/cqTail (acquire) — liburing uses
+  relaxed loads
+- sqArray written every flush — liburing writes once at setup
+
