@@ -68,9 +68,6 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4.3.1
       - uses: actions/setup-go@v5.6.0
@@ -102,15 +99,6 @@ jobs:
           name: coverage-unit
           path: coverage/
           retention-days: 30
-      - name: Upload unit coverage to Codecov
-        if: matrix.arch == 'amd64'
-        uses: codecov/codecov-action@v5.5.4
-        with:
-          files: coverage/unit.out
-          flags: unit
-          fail_ci_if_error: false
-          disable_search: true
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   test-integration:
     name: Integration tests (${{ matrix.arch }})
@@ -123,9 +111,6 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4.3.1
       - uses: actions/setup-go@v5.6.0
@@ -172,23 +157,13 @@ jobs:
           name: coverage-integration
           path: coverage/
           retention-days: 30
-      - name: Upload integration coverage to Codecov
-        if: matrix.arch == 'amd64'
-        uses: codecov/codecov-action@v5.5.4
-        with:
-          files: coverage/integration.out
-          flags: integration
-          fail_ci_if_error: false
-          disable_search: true
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   coverage:
     name: Combined coverage
     needs: [test-unit, test-integration]
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4.3.1
       - uses: actions/setup-go@v5.6.0
@@ -227,11 +202,34 @@ jobs:
           name: coverage-combined
           path: coverage/combined.*
           retention-days: 30
-      - name: Upload combined coverage to Codecov
-        uses: codecov/codecov-action@v5.5.4
+      - name: Generate coverage badge
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -eu
+          # Extract the total coverage percentage (e.g. "79.3%")
+          pct=$(go tool cover -func=coverage/combined.out | tail -1 | awk '{print $NF}' | tr -d '%')
+
+          # Sanity-check: pct must look like a number (e.g. "79.3").
+          if ! echo "$pct" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+            echo "ERROR: unexpected coverage value: '$pct'" >&2
+            exit 1
+          fi
+
+          # Pick badge colour based on coverage level.
+          if   awk "BEGIN{exit!($pct>=80)}"; then color="brightgreen"
+          elif awk "BEGIN{exit!($pct>=60)}"; then color="green"
+          elif awk "BEGIN{exit!($pct>=40)}"; then color="yellow"
+          else                                   color="red"
+          fi
+
+          # Write a shields.io JSON endpoint file.
+          mkdir -p badge
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > badge/coverage.json
+      - name: Publish coverage badge
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4.0.0
         with:
-          files: coverage/combined.out
-          flags: combined
-          fail_ci_if_error: false
-          disable_search: true
-          token: ${{ secrets.CODECOV_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./badge
+          destination_dir: badge
+          keep_files: true

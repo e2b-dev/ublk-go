@@ -270,28 +270,23 @@ not refactor the order without rerunning `make test-integration` under
 CI splits coverage collection across three jobs:
 
 - `test-unit` (amd64+arm64): runs unit tests, uploads `unit.out` and
-  `unit.html` as the `coverage-unit` artifact. amd64 variant flags it
-  to Codecov as `unit`.
+  `unit.html` as the `coverage-unit` artifact.
 - `test-integration` (amd64+arm64): runs integration tests, uploads
   `integration.out` and `integration.html` as `coverage-integration`.
-  amd64 flags to Codecov as `integration`.
 - `coverage` (amd64 only, `needs: [test-unit, test-integration]`):
   downloads both artifacts, merges them with `gocovmerge`, uploads
-  `combined.out`/`combined.html` as `coverage-combined`, flags to
-  Codecov as `combined`.
+  `combined.out`/`combined.html` as `coverage-combined`.
 
 Every run page therefore has **three separate artifact bundles** plus
 a `## Combined coverage` block in the step summary showing the merged
-number. Codecov shows per-flag + merged automatically.
+number.
 
-On a private repo without `CODECOV_TOKEN` the Codecov uploads 403 but
-don't fail CI (`fail_ci_if_error: false`). The artifacts are still
-there — download and open `combined.html` locally. Once the repo is
-public (tokenless OIDC) or the token is set, Codecov flips on.
-
-So the Codecov badge in the README will be red/"unknown" on a private
-repo with no token; that's expected. The artifact + step summary are
-the reliable sources while the repo isn't public.
+On pushes to `main`, the `coverage` job generates a Shields.io
+endpoint JSON file (`badge/coverage.json`) and publishes it to the
+`gh-pages` branch via `peaceiris/actions-gh-pages`. The README badge
+points at `https://img.shields.io/endpoint?url=https://e2b-dev.github.io/ublk-go/badge/coverage.json`.
+No external coverage service or token is required — `GITHUB_TOKEN`
+handles the push to `gh-pages`.
 
 Bare unit tests alone give ~33% coverage because most of the library
 needs root + ublk_drv loaded to exercise. The integration test binary
