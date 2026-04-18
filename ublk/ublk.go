@@ -4,6 +4,7 @@ package ublk
 import (
 	"fmt"
 	"io"
+	"reflect"
 )
 
 // Backend is the storage that the block device is backed by. It must
@@ -15,9 +16,12 @@ type Backend interface {
 	io.WriterAt
 }
 
-// New creates a ublk block device. Size must be a positive multiple of 512.
-// Call Device.Close() to stop and remove the device.
+// New creates a ublk block device. backend must be non-nil. Size must be a
+// positive multiple of 512. Call Device.Close() to stop and remove the device.
 func New(backend Backend, size uint64) (*Device, error) {
+	if isNilBackend(backend) {
+		return nil, fmt.Errorf("backend must not be nil")
+	}
 	if size == 0 || size%512 != 0 {
 		return nil, fmt.Errorf("size must be > 0 and a multiple of 512")
 	}
@@ -76,4 +80,18 @@ func New(backend Backend, size uint64) (*Device, error) {
 	}
 
 	return dev, nil
+}
+
+func isNilBackend(backend Backend) bool {
+	if backend == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(backend)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

@@ -36,6 +36,19 @@ func TestNewInvalidSize(t *testing.T) {
 	}
 }
 
+func TestNewNilBackend(t *testing.T) {
+	t.Parallel()
+
+	if _, err := New(nil, 4096); err == nil {
+		t.Fatal("New(nil, 4096) should fail")
+	}
+
+	var typedNil *memBackend
+	if _, err := New(typedNil, 4096); err == nil {
+		t.Fatal("New(typed nil backend, 4096) should fail")
+	}
+}
+
 type memBackend struct {
 	mu     sync.RWMutex
 	data   []byte
