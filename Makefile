@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet lint-license fmt hooks
 
 test: test-unit test-integration
 
@@ -72,7 +72,7 @@ sigkill:
 build:
 	go build ./...
 
-lint: lint-fmt lint-tidy lint-vet
+lint: lint-fmt lint-tidy lint-vet lint-license
 
 lint-fmt:
 	test -z "$$(gofmt -l .)"
@@ -83,6 +83,22 @@ lint-tidy:
 lint-vet:
 	golangci-lint run ./...
 	go mod verify
+
+# Verify the LICENSE body (sections 1-9) matches the SPDX-canonical
+# Apache-2.0 text word-for-word.  Only the copyright line in the
+# APPENDIX is allowed to differ.
+lint-license:
+	@echo "Checking LICENSE against SPDX-canonical Apache-2.0..."
+	@expected=$$(curl -sSfL https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt \
+	  | sed -n '1,/END OF TERMS AND CONDITIONS/p' | tr -s '[:space:]' '\n' | grep -v '^$$'); \
+	actual=$$(sed -n '1,/END OF TERMS AND CONDITIONS/p' LICENSE | tr -s '[:space:]' '\n' | grep -v '^$$'); \
+	if [ "$$expected" != "$$actual" ]; then \
+	  echo "ERROR: LICENSE body does not match canonical Apache-2.0 (SPDX)." >&2; \
+	  echo "Run: diff <(sed -n '1,/END OF TERMS AND CONDITIONS/p' LICENSE | tr -s '[:space:]' '\\n') \\" >&2; \
+	  echo "          <(curl -sSfL https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt | sed -n '1,/END OF TERMS AND CONDITIONS/p' | tr -s '[:space:]' '\\n')" >&2; \
+	  exit 1; \
+	fi
+	@echo "LICENSE OK"
 
 fmt:
 	gofmt -w .

@@ -20,6 +20,8 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: false
+      - name: Check LICENSE matches canonical Apache-2.0
+        run: make lint-license
       - name: Check formatting
         run: make lint-fmt
       - name: Check go.mod tidy
