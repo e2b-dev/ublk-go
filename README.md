@@ -1,7 +1,7 @@
 # ublk-go
 
 [![CI](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/e2b-dev/ublk-go/branch/main/graph/badge.svg)](https://app.codecov.io/gh/e2b-dev/ublk-go)
+[![coverage](https://img.shields.io/endpoint?url=https://e2b-dev.github.io/ublk-go/badge/coverage.json)](https://github.com/e2b-dev/ublk-go/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/e2b-dev/ublk-go.svg)](https://pkg.go.dev/github.com/e2b-dev/ublk-go)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
