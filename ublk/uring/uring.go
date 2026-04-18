@@ -81,16 +81,18 @@ type params struct {
 	CqOff        cqOffsets
 }
 
+// sqOffsets mirrors struct io_sqring_offsets.
 type sqOffsets struct {
 	Head, Tail, RingMask, RingEntries, Flags, Dropped, Array uint32
 	Resv1                                                    uint32
-	Resv2                                                    uint64
+	UserAddr                                                 uint64
 }
 
+// cqOffsets mirrors struct io_cqring_offsets.
 type cqOffsets struct {
 	Head, Tail, RingMask, RingEntries, Overflow, Cqes, Flags uint32
 	Resv1                                                    uint32
-	Resv2                                                    uint64
+	UserAddr                                                 uint64
 }
 
 var (
