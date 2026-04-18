@@ -209,6 +209,12 @@ jobs:
           # Extract the total coverage percentage (e.g. "79.3%")
           pct=$(go tool cover -func=coverage/combined.out | tail -1 | awk '{print $NF}' | tr -d '%')
 
+          # Sanity-check: pct must look like a number (e.g. "79.3").
+          if ! echo "$pct" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+            echo "ERROR: unexpected coverage value: '$pct'" >&2
+            exit 1
+          fi
+
           # Pick badge colour based on coverage level.
           if   awk "BEGIN{exit!($pct>=80)}"; then color="brightgreen"
           elif awk "BEGIN{exit!($pct>=60)}"; then color="green"
