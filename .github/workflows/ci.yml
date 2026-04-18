@@ -110,6 +110,7 @@ jobs:
           flags: unit
           fail_ci_if_error: false
           disable_search: true
+          use_oidc: ${{ !secrets.CODECOV_TOKEN }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
   test-integration:
@@ -180,6 +181,7 @@ jobs:
           flags: integration
           fail_ci_if_error: false
           disable_search: true
+          use_oidc: ${{ !secrets.CODECOV_TOKEN }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
   coverage:
@@ -234,4 +236,5 @@ jobs:
           flags: combined
           fail_ci_if_error: false
           disable_search: true
+          use_oidc: ${{ !secrets.CODECOV_TOKEN }}
           token: ${{ secrets.CODECOV_TOKEN }}

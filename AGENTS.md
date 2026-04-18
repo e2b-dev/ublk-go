@@ -286,8 +286,10 @@ number. Codecov shows per-flag + merged automatically.
 
 On a private repo without `CODECOV_TOKEN` the Codecov uploads 403 but
 don't fail CI (`fail_ci_if_error: false`). The artifacts are still
-there — download and open `combined.html` locally. Once the repo is
-public (tokenless OIDC) or the token is set, Codecov flips on.
+there — download and open `combined.html` locally. On a public repo
+(or when `CODECOV_TOKEN` is set), Codecov works automatically:
+`use_oidc` is enabled when no token is configured, so public repos
+get tokenless OIDC authentication out of the box.
 
 So the Codecov badge in the README will be red/"unknown" on a private
 repo with no token; that's expected. The artifact + step summary are
