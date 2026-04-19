@@ -3,6 +3,7 @@ package ublk
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -56,6 +57,15 @@ func (d *Device) addDev(queues, depth uint16, maxIOBuf uint32) error {
 		DevID:         ^uint32(0), // must match cmd.DevID (kernel 6.17+)
 		Flags:         flagCmdIoctlEncode,
 	}
+
+	// Pin info: the kernel reads from this address between Submit and
+	// the CQE returning. Going through unsafe.Pointer→uintptr in cmd.Addr
+	// loses pointer-ness from the GC's view, so without pinning the Go
+	// runtime would be free (in theory) to move or collect the backing
+	// memory while the kernel is still reading from it.
+	var pinner runtime.Pinner
+	pinner.Pin(&info)
+	defer pinner.Unpin()
 
 	cmd := ctrlCmd{
 		DevID:   ^uint32(0),
@@ -113,6 +123,14 @@ func (d *Device) setParams(size uint64, maxSectors uint32) error {
 			DevSectors:      size / 512,
 		},
 	}
+
+	// Pin params: same rationale as in addDev. The kernel reads from
+	// the address embedded in cmd.Addr between Submit and the CQE
+	// returning; the uintptr conversion makes the pointer invisible to
+	// the GC, so we must keep the backing memory anchored explicitly.
+	var pinner runtime.Pinner
+	pinner.Pin(&params)
+	defer pinner.Unpin()
 
 	cmd := ctrlCmd{
 		DevID:   uint32(d.id),
