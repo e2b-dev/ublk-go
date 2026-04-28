@@ -133,7 +133,15 @@ func (w *worker) allocBuffers() {
 	}
 }
 
-func (w *worker) handleIO(tag uint16) int32 {
+func (w *worker) handleIO(tag uint16) (result int32) {
+	// Catch any panic from the backend (e.g. nil-pointer, slice out-of-bounds)
+	// and return EIO to the kernel rather than crashing the whole process.
+	defer func() {
+		if r := recover(); r != nil {
+			result = -int32(unix.EIO)
+		}
+	}()
+
 	desc := w.getDesc(tag)
 	op := desc.OpFlags & 0xFF
 

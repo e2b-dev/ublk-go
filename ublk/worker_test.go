@@ -188,6 +188,39 @@ func TestAlignedAlloc(t *testing.T) {
 	}
 }
 
+func TestWorkerHandleIOBackendPanic(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		op   uint32
+	}{
+		{name: "read", op: opRead},
+		{name: "write", op: opWrite},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend := &stubBackend{}
+			if tc.op == opRead {
+				backend.readAt = func(_ []byte, _ int64) (int, error) {
+					panic("simulated backend read panic")
+				}
+			} else {
+				backend.writeAt = func(_ []byte, _ int64) (int, error) {
+					panic("simulated backend write panic")
+				}
+			}
+			w := newTestWorker(backend)
+			w.setDesc(ioDesc{OpFlags: tc.op, NrSectors: 8})
+
+			if got := w.handleIO(0); got != -int32(unix.EIO) {
+				t.Fatalf("handleIO() = %d, want -EIO on backend panic", got)
+			}
+		})
+	}
+}
+
 func TestWorkerHandleIOReadError(t *testing.T) {
 	t.Parallel()
 
