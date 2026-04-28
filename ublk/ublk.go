@@ -28,9 +28,12 @@ type Option func(*Device)
 
 // WithLogger sets the logger used to report internal errors, such as panics
 // recovered in the IO path. The default is [slog.Default].
+// Passing nil is a no-op; the default logger is retained.
 func WithLogger(l Logger) Option {
 	return func(d *Device) {
-		d.log = l
+		if l != nil {
+			d.log = l
+		}
 	}
 }
 
