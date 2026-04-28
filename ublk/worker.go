@@ -2,6 +2,7 @@ package ublk
 
 import (
 	"runtime"
+	"runtime/debug"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -138,6 +139,7 @@ func (w *worker) handleIO(tag uint16) (result int32) {
 	// and return EIO to the kernel rather than crashing the whole process.
 	defer func() {
 		if r := recover(); r != nil {
+			w.dev.log.Error("backend panic recovered", "value", r, "stack", string(debug.Stack()))
 			result = -int32(unix.EIO)
 		}
 	}()

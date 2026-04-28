@@ -22,6 +22,7 @@ type Device struct {
 	ctrlRing  *uring.Ring
 	info      devInfo
 	backend   Backend
+	log       Logger
 	useIoctl  bool
 	workers   []*worker
 	wg        sync.WaitGroup

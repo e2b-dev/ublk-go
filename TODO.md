@@ -405,3 +405,26 @@ After device creation, adjust via sysfs:
 echo 2048 > /sys/block/ublkb0/queue/max_sectors_kb
 echo 2048 > /sys/block/ublkb0/queue/read_ahead_kb
 ```
+
+## Observability
+
+### Metrics interface
+
+Add an optional `Metrics` interface (or hook) so callers can instrument
+the IO path without importing a specific metrics library:
+
+```go
+type Metrics interface {
+    RecordIO(op string, bytes int, latency time.Duration, err error)
+}
+```
+
+Pass via a `WithMetrics(Metrics) Option` (same pattern as `WithLogger`).
+This lets users wire Prometheus, OpenTelemetry, or any other collector
+without the library taking a hard dependency on any of them. The hot path
+should check once at startup whether the interface is non-nil rather than
+doing an interface call on every IO when metrics are disabled.
+
+Useful counters to expose: ops/sec per opcode (read/write/flush/discard),
+bytes/sec, per-op latency histogram, error count by errno, queue depth
+utilisation, backend panic count.

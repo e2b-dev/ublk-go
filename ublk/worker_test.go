@@ -3,6 +3,7 @@ package ublk
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"testing"
 	"unsafe"
 
@@ -37,7 +38,7 @@ func newTestWorker(backend Backend) *worker {
 	const depth = 1
 	const bufSize = 4096
 	w := &worker{
-		dev:     &Device{backend: backend},
+		dev:     &Device{backend: backend, log: slog.Default()},
 		depth:   depth,
 		bufSize: bufSize,
 		ioDescs: make([]byte, int(depth)*int(sizeofIODesc)),
