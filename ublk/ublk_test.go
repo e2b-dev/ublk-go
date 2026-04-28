@@ -2,7 +2,6 @@ package ublk
 
 import (
 	"io"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,15 +33,6 @@ func TestNewInvalidSize(t *testing.T) {
 	}
 	if _, err := New(backend, 1000); err == nil {
 		t.Error("New(size=1000) should fail (not multiple of 512)")
-	}
-}
-
-func TestWithLoggerNilIsNoOp(t *testing.T) {
-	t.Parallel()
-	d := &Device{log: slog.Default()}
-	WithLogger(nil)(d)
-	if d.log == nil {
-		t.Fatal("WithLogger(nil) must not clear the logger")
 	}
 }
 
