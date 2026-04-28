@@ -186,6 +186,74 @@ just to auto-`modprobe` this on cluster nodes. We can't (and
 shouldn't) call modprobe from a library, but a clear pointer in
 the error message saves users a Google search.
 
+### Backend error and panic observability
+
+**The problem.** `worker.handleIO` currently swallows all backend errors
+silently. When `Backend.ReadAt`/`WriteAt` returns an error the worker
+returns `-EIO` to the kernel but nothing surfaces to Go userspace beyond
+a `slog.Default()` log line (and only for panics — ordinary errors are
+fully silent). There is no way for the caller of `ublk.New` to know the
+device is degraded or to trigger cleanup.
+
+**Why you can't call `dev.Close()` directly from the IO path.**
+`Close()` calls `shutdown()`, which calls `w.ioRing.Cancel()` and then
+`wg.Wait()`. The worker goroutine executing `handleIO` is the same
+goroutine counted in the `WaitGroup`, so `wg.Wait()` deadlocks if called
+from inside the worker. Any notification must be *asynchronous* — the
+worker signals outward, and a separate goroutine calls `Close()`.
+
+**Options considered:**
+
+1. **`WithErrorHandler(fn func(err error))` option** — the library calls
+   `fn` from the worker on any backend error or recovered panic. `fn`
+   must be non-blocking (e.g. send to a buffered channel, set an
+   `atomic.Value`). The user's goroutine monitors that and calls
+   `dev.Close()`. Small, additive, follows the existing `WithLogger`
+   option shape. Gives the caller policy control (close on first error,
+   close after N, only on writes, etc.). One downside: two separate hooks
+   (`WithLogger` for structured log output, `WithErrorHandler` for
+   programmatic reaction) feel redundant and raise the question of whether
+   `WithLogger` is even necessary once there is a proper handler.
+
+2. **`Device.Done() <-chan error` method** — the library closes (or sends
+   on) an internal channel the first time any worker error occurs,
+   carrying the first non-nil error as the channel value. Caller does
+   `select { case err := <-dev.Done(): ... }` alongside their own work.
+   Idiomatic Go (mirrors `context.Done()`, `net/http.Server.Shutdown`
+   notifications, etc.). Slightly more opinionated than a callback:
+   only the *first* error is surfaced, subsequent ones are dropped
+   (acceptable if the policy is "close on first error"). Channel
+   management needs care across `Close()` calls.
+
+3. **Backend-wrapper approach (no library changes)** — user wraps their
+   `Backend` in a proxy that counts errors and fires a notification. No
+   library surface change required. Awkward in practice: the wrapper
+   needs a reference to `*Device` (which doesn't exist until `New`
+   returns), requiring a deferred setter on the wrapper, and the wrapper
+   can't distinguish panics recovered by the library from ordinary errors.
+
+**Open question: is `WithLogger` still needed?**
+If we add a proper error callback or `Done()` channel, callers can log
+errors themselves with whatever structure and routing they prefer. The
+current `Logger` interface exists solely so the panic-recovery path has
+*somewhere* to emit before returning `-EIO`. It may be better to fold
+panic information into the error passed to the handler and drop
+`WithLogger` entirely, keeping the public API surface smaller. This is
+worth deciding before implementing either option.
+
+**Recommendation.** Implement option 2 (`Done() <-chan error`) as the
+primary interface — it composes naturally with `context`, `select`, and
+`errgroup`. Add the first-error value so callers see *why* the device
+failed, not just *that* it failed. Reconsider `WithLogger` at the same
+time and likely remove it.
+
+**Connection to metrics.** The error count by errno that the planned
+`Metrics` interface would expose (see "Metrics interface" below) is
+essentially the same counter as the error handler would fire. When both
+features are implemented, the error handler becomes the hook that drives
+both the `Metrics.RecordIO(…, err)` call *and* the `Done()` channel
+close. Design them together.
+
 ### Safety review note for contributors
 
 Document the unsafe-pointer discipline in the package: any address
@@ -405,3 +473,26 @@ After device creation, adjust via sysfs:
 echo 2048 > /sys/block/ublkb0/queue/max_sectors_kb
 echo 2048 > /sys/block/ublkb0/queue/read_ahead_kb
 ```
+
+## Observability
+
+### Metrics interface
+
+Add an optional `Metrics` interface (or hook) so callers can instrument
+the IO path without importing a specific metrics library:
+
+```go
+type Metrics interface {
+    RecordIO(op string, bytes int, latency time.Duration, err error)
+}
+```
+
+Pass via a `WithMetrics(Metrics) Option` (same pattern as `WithLogger`).
+This lets users wire Prometheus, OpenTelemetry, or any other collector
+without the library taking a hard dependency on any of them. The hot path
+should check once at startup whether the interface is non-nil rather than
+doing an interface call on every IO when metrics are disabled.
+
+Useful counters to expose: ops/sec per opcode (read/write/flush/discard),
+bytes/sec, per-op latency histogram, error count by errno, queue depth
+utilisation, backend panic count.
