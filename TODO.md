@@ -496,3 +496,132 @@ doing an interface call on every IO when metrics are disabled.
 Useful counters to expose: ops/sec per opcode (read/write/flush/discard),
 bytes/sec, per-op latency histogram, error count by errno, queue depth
 utilisation, backend panic count.
+
+## Testing
+
+### Property-based / model-based state machine tests (`rapid`)
+
+Add [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) as a test
+dependency and write a state machine test (via `rapid.T.Repeat`) for the
+device lifecycle and data plane.
+
+The test defines:
+- A **model** — a simple in-memory map of `offset → bytes` representing what
+  the device should contain.
+- A set of **commands** generated randomly by `rapid`: `Write(offset, data)`,
+  `Read(offset, len)`, `Fsync`, `Close`, `Create` (new device), plus
+  multi-device commands to check cross-device isolation.
+- **Invariants** checked after every command:
+  - A `Read` must return the bytes from the most recent `Write` at that range.
+  - Bytes written to device N must never appear on device M.
+  - `Close` must terminate within a bounded time and leave no device node.
+  - `Close` called multiple times must not panic or hang.
+
+`rapid` automatically **shrinks** any failing sequence to its minimal
+reproducer, which is the primary advantage over the existing
+`TestTortureRandomIO` (which is a long-running soak, not a shrinker).
+
+The test lives alongside the existing integration tests
+(`//go:build integration`, runs as root with `ublk_drv` loaded). Duration and
+parallelism are controlled by env vars so it fits in the normal CI timeout by
+default.
+
+**Why this is distinct from `TestTortureRandomIO`:** torture is a
+long-running soak with fixed structure (N workers, disjoint regions). The
+`rapid` state machine generates arbitrary command sequences including
+lifecycle transitions (create/close mid-stream) and multiple devices, and
+produces a reproducible minimal failing case when it finds a bug.
+
+### Probabilistic chaos backend
+
+Add a `chaosBackend` wrapper (in `ublk/` test helpers or a new
+`ublk/testutil/` package) that wraps any `Backend` and randomly injects
+failures at a configurable rate:
+
+```go
+type ChaosConfig struct {
+    WriteErrorRate float64       // fraction of WriteAt calls that return EIO
+    ReadErrorRate  float64       // fraction of ReadAt calls that return EIO
+    MaxDelay       time.Duration // uniform random delay [0, MaxDelay] per call
+}
+```
+
+Write integration tests that drive `TestTortureRandomIO` with a chaos backend
+and verify:
+- Errors surface as `EIO` to the caller at the block device level (no hangs,
+  no panics, no silent data corruption on the successful path).
+- `Close()` terminates in bounded time even when the backend is injecting
+  errors and/or latency into in-flight IOs.
+- After the chaos backend is swapped out for a healthy one, subsequent reads
+  return correct data (no residual corruption state in the worker or ring).
+
+**Why this is distinct from `fault_integration_test.go`:** the existing fault
+tests use fully-on or fully-off failure modes with a static config. The chaos
+backend exercises partial failure rates and latency injection, which is the
+realistic failure mode for remote or unreliable storage backends.
+
+### Go native fuzz tests for `ublk/uring/`
+
+Add `FuzzXxx` functions to `ublk/uring/uring_test.go` targeting the ring
+management code. Unlike the integration tests above, these run without root or
+`ublk_drv` and can be run overnight with `go test -fuzz=.`:
+
+- **`FuzzRingSubmit`** — takes a `[]byte` seed, interprets it as a sequence of
+  (opcode, userData) pairs, submits them as NOP SQEs, drains the CQE ring,
+  and checks that every submitted `UserData` is returned exactly once. Verifies
+  that `flushSQ`, `WaitCQE`, and the ring head/tail arithmetic don't corrupt
+  or lose entries under arbitrary submission patterns.
+- **`FuzzRingCancel`** — drives concurrent `Submit` and `Cancel` from two
+  goroutines with random interleaving seeded by the fuzzer input. Checks that
+  `WaitCQE` always returns after `Cancel` is called, even when the CQ has
+  zero or many ready entries (regression guard for the fast-path cancel race
+  described in AGENTS.md).
+
+These tests run as normal unit tests (`go test ./ublk/uring/`) using seed
+corpus entries; the `-fuzz` flag enables coverage-guided mutation. No kernel
+or root access needed. Corpus entries that find new coverage are committed to
+`ublk/uring/testdata/fuzz/`.
+
+### Linearizability checking (extension of the `rapid` state machine test)
+
+Once the `rapid` state machine test (above) is in place, instrument it to
+record a history of operations with wall-clock timestamps and result values,
+then feed the history to
+[`anishathalye/porcupine`](https://github.com/anishathalye/porcupine) — a Go
+linearizability checker.
+
+This formally answers: "does every read return the value of the last completed
+write that precedes it in real time, for all concurrent orderings?" — the same
+check Jepsen runs for distributed databases, applied here to a single block
+device with concurrent callers.
+
+The check is a post-processing step on the same test run; it adds no test
+infrastructure beyond adding `porcupine` as a test dependency and a history
+recorder around the model commands. If the `rapid` state machine tests pass
+but the linearizability check fails, it means concurrent reads and writes
+are producing a result that has no valid sequential explanation — a subtle
+correctness bug not caught by per-operation assertions.
+
+### Syzkaller for kernel-level ublk fuzzing
+
+[syzkaller](https://github.com/google/syzkaller) is Google's
+coverage-guided Linux syscall fuzzer. It generates random sequences of ioctl
+calls against kernel interfaces using hand-written descriptions (syzlang),
+running inside VMs with a specially-built kernel (kcov + KASAN + KCSAN).
+
+For ublk-go this means writing syzlang descriptions for:
+- `UBLK_CMD_ADD_DEV`, `UBLK_CMD_START_DEV`, `UBLK_CMD_STOP_DEV`,
+  `UBLK_CMD_DEL_DEV`, `UBLK_CMD_SET_PARAMS` on `/dev/ublk-control`
+- `UBLK_IO_FETCH_REQ`, `UBLK_IO_COMMIT_AND_FETCH_REQ` on `/dev/ublkcN` via
+  `IORING_OP_URING_CMD`
+
+Running syzkaller against these interfaces would find kernel bugs in `ublk_drv`
+triggered by the specific usage patterns of ublk-go (e.g., racing ADD_DEV with
+DEL_DEV, submitting malformed COMMIT payloads, crashing the process during
+START_DEV). Any bugs found would be reported upstream to linux-block and cc'd
+to Ming Lei.
+
+Setup cost is high (instrumented kernel build, VM image, syz-manager
+configuration) and the output is kernel bugs rather than library bugs. Worth
+doing if ublk-go is deployed in production at scale and you want confidence in
+the kernel driver itself.
