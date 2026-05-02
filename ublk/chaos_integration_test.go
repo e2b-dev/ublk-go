@@ -66,12 +66,29 @@ func (c *chaosBackend) Reads() int64     { return c.reads.Load() }
 func (c *chaosBackend) WriteErrs() int64 { return c.writeErrs.Load() }
 func (c *chaosBackend) ReadErrs() int64  { return c.readErrs.Load() }
 
+// chaosOp distinguishes which rate sampleDecision should read.
+type chaosOp uint8
+
+const (
+	chaosOpWrite chaosOp = iota
+	chaosOpRead
+)
+
 // sampleDecision returns (fail, delay) under the mutex. The PRNG is not
-// concurrent-safe so the whole decision is taken under the lock; the
-// actual delay sleep then happens outside to avoid serialising workers.
-func (c *chaosBackend) sampleDecision(errRate float64) (bool, time.Duration) {
+// concurrent-safe and the rate fields are mutated by setRates, so the
+// whole decision (including reading the relevant rate) is taken under
+// the lock. The actual delay sleep then happens outside to avoid
+// serialising workers.
+func (c *chaosBackend) sampleDecision(op chaosOp) (bool, time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var errRate float64
+	switch op {
+	case chaosOpWrite:
+		errRate = c.writeErrorRate
+	case chaosOpRead:
+		errRate = c.readErrorRate
+	}
 	var fail bool
 	if errRate > 0 {
 		fail = c.rng.Float64() < errRate
@@ -85,7 +102,7 @@ func (c *chaosBackend) sampleDecision(errRate float64) (bool, time.Duration) {
 
 func (c *chaosBackend) WriteAt(p []byte, off int64) (int, error) {
 	c.writes.Add(1)
-	fail, delay := c.sampleDecision(c.writeErrorRate)
+	fail, delay := c.sampleDecision(chaosOpWrite)
 	if delay > 0 {
 		time.Sleep(delay)
 	}
@@ -98,7 +115,7 @@ func (c *chaosBackend) WriteAt(p []byte, off int64) (int, error) {
 
 func (c *chaosBackend) ReadAt(p []byte, off int64) (int, error) {
 	c.reads.Add(1)
-	fail, delay := c.sampleDecision(c.readErrorRate)
+	fail, delay := c.sampleDecision(chaosOpRead)
 	if delay > 0 {
 		time.Sleep(delay)
 	}
