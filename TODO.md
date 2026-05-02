@@ -499,36 +499,6 @@ utilisation, backend panic count.
 
 ## Testing
 
-### Property-based / model-based state machine tests (`rapid`) (done)
-
-Implemented in `ublk/rapid_integration_test.go` (`TestRapidStateMachine`).
-Uses [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid)'s
-`t.Repeat` state-machine API to generate random sequences of `create`,
-`write`, `read`, `fsync`, and `close` actions against up to two live
-ublk devices, with an in-memory `map[deviceID][]byte` shadow model.
-
-Invariants checked after every action:
-
-- A `Read` returns bytes from the most recent `Write` at that range
-  (per device).
-- Bytes written to device A never appear at the same offset on device
-  B (cross-device isolation).
-- `Close` terminates within a bounded 5 s timer (a hang in
-  `del_gendisk` would otherwise deadlock the test).
-- `Close` called twice in a row does not panic or hang (idempotency,
-  mirrors `TestCloseIdempotent`).
-
-The user fd on `/dev/ublkbN` is closed before `Device.Close()` (the
-fd-close-before-Close discipline documented in `AGENTS.md`).
-
-Run via `make test-rapid` or as part of `make test-integration`.
-Tunable via standard rapid flags (`-rapid.checks=N`, `RAPID_CHECKS=N`,
-…).
-
-Linearizability checking (below) is the natural follow-up: it
-post-processes the same generated history with `porcupine` to catch
-ordering bugs not caught by per-operation assertions.
-
 ### Probabilistic chaos backend
 
 Add a `chaosBackend` wrapper (in `ublk/` test helpers or a new
