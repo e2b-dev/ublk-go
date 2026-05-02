@@ -163,12 +163,25 @@ func FuzzRingCancel(f *testing.F) {
 
 		const ringSize = 16
 		r := newRingOrSkip(t, ringSize)
-		defer r.Close()
 
 		var (
 			stopProducers atomic.Bool
 			producerWg    sync.WaitGroup
 		)
+		// Cleanup ordering matters here. Producers call r.GetSQE64()
+		// and r.Submit() on the ring's mmap'd SQ pages; if a t.Fatal
+		// inside the test body returns through these defers, we MUST
+		// stop and join the producers BEFORE r.Close() munmaps those
+		// pages, otherwise an in-flight producer SIGSEGVs and masks
+		// the original failure with a runtime crash.
+		//
+		// defers run LIFO, so register Close() first and the
+		// stop-and-join second.
+		defer r.Close()
+		defer func() {
+			stopProducers.Store(true)
+			producerWg.Wait()
+		}()
 
 		// Two producer goroutines hammer the SQ. We use a mutex-free
 		// pattern: each producer takes its own slot using GetSQE64;
@@ -222,8 +235,5 @@ func FuzzRingCancel(f *testing.F) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("consumer did not observe Cancel within 2s")
 		}
-
-		stopProducers.Store(true)
-		producerWg.Wait()
 	})
 }
