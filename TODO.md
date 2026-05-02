@@ -499,38 +499,35 @@ utilisation, backend panic count.
 
 ## Testing
 
-### Property-based / model-based state machine tests (`rapid`)
+### Property-based / model-based state machine tests (`rapid`) (done)
 
-Add [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) as a test
-dependency and write a state machine test (via `rapid.T.Repeat`) for the
-device lifecycle and data plane.
+Implemented in `ublk/rapid_integration_test.go` (`TestRapidStateMachine`).
+Uses [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid)'s
+`t.Repeat` state-machine API to generate random sequences of `create`,
+`write`, `read`, `fsync`, and `close` actions against up to two live
+ublk devices, with an in-memory `map[deviceID][]byte` shadow model.
 
-The test defines:
-- A **model** — a simple in-memory map of `offset → bytes` representing what
-  the device should contain.
-- A set of **commands** generated randomly by `rapid`: `Write(offset, data)`,
-  `Read(offset, len)`, `Fsync`, `Close`, `Create` (new device), plus
-  multi-device commands to check cross-device isolation.
-- **Invariants** checked after every command:
-  - A `Read` must return the bytes from the most recent `Write` at that range.
-  - Bytes written to device N must never appear on device M.
-  - `Close` must terminate within a bounded time and leave no device node.
-  - `Close` called multiple times must not panic or hang.
+Invariants checked after every action:
 
-`rapid` automatically **shrinks** any failing sequence to its minimal
-reproducer, which is the primary advantage over the existing
-`TestTortureRandomIO` (which is a long-running soak, not a shrinker).
+- A `Read` returns bytes from the most recent `Write` at that range
+  (per device).
+- Bytes written to device A never appear at the same offset on device
+  B (cross-device isolation).
+- `Close` terminates within a bounded 5 s timer (a hang in
+  `del_gendisk` would otherwise deadlock the test).
+- `Close` called twice in a row does not panic or hang (idempotency,
+  mirrors `TestCloseIdempotent`).
 
-The test lives alongside the existing integration tests
-(`//go:build integration`, runs as root with `ublk_drv` loaded). Duration and
-parallelism are controlled by env vars so it fits in the normal CI timeout by
-default.
+The user fd on `/dev/ublkbN` is closed before `Device.Close()` (the
+fd-close-before-Close discipline documented in `AGENTS.md`).
 
-**Why this is distinct from `TestTortureRandomIO`:** torture is a
-long-running soak with fixed structure (N workers, disjoint regions). The
-`rapid` state machine generates arbitrary command sequences including
-lifecycle transitions (create/close mid-stream) and multiple devices, and
-produces a reproducible minimal failing case when it finds a bug.
+Run via `make test-rapid` or as part of `make test-integration`.
+Tunable via standard rapid flags (`-rapid.checks=N`, `RAPID_CHECKS=N`,
+…).
+
+Linearizability checking (below) is the natural follow-up: it
+post-processes the same generated history with `porcupine` to catch
+ordering bugs not caught by per-operation assertions.
 
 ### Probabilistic chaos backend
 
