@@ -532,40 +532,6 @@ long-running soak with fixed structure (N workers, disjoint regions). The
 lifecycle transitions (create/close mid-stream) and multiple devices, and
 produces a reproducible minimal failing case when it finds a bug.
 
-### Probabilistic chaos backend (done)
-
-Landed as `ublk/chaos_integration_test.go`. A `chaosBackend` wraps any
-`Backend` and probabilistically returns `unix.EIO` and/or injects a
-uniform random delay `[0, MaxDelay]` before delegating. Configuration
-(`WriteErrorRate`, `ReadErrorRate`, `MaxDelay`) is mutable behind a
-mutex, backed by a deterministic `math/rand/v2` PRNG seeded per-test
-for reproducibility, with atomic counters for `Writes`, `Reads`,
-`WriteErrs`, `ReadErrs`.
-
-Three integration tests exercise it:
-
-- `TestChaosErrorsPropagateAsEIO` — 50% write / 50% read error rate, no
-  delay; asserts every non-nil IO error is `EIO` and the observed error
-  fraction lies within a wide tolerance band around the configured rate
-  (so the wrapper is demonstrably active).
-- `TestChaosCloseTerminatesUnderLatency` — 0% errors, `MaxDelay = 50ms`,
-  two concurrent IO goroutines for ~1s; asserts `Device.Close()` returns
-  within 10s after user fds are closed (mirrors
-  `TestCloseAfterBackendErrors`).
-- `TestChaosRecovery` — 100% write error rate for N writes (asserts each
-  returns `EIO`), then flips the wrapper to passthrough and asserts N
-  write+read roundtrips return exactly the bytes written, verifying no
-  residual corruption from the error phase.
-
-Run in isolation with `make test-chaos`. The tests carry the
-`//go:build integration` tag and are picked up by the existing
-`test-integration` CI job; no separate CI plumbing required.
-
-**Why this is distinct from `fault_integration_test.go`:** the existing
-fault tests use fully-on or fully-off failure modes with no latency.
-Chaos exercises partial failure rates and latency injection, which is
-the realistic failure mode for remote or unreliable storage backends.
-
 ### Go native fuzz tests for `ublk/uring/`
 
 Add `FuzzXxx` functions to `ublk/uring/uring_test.go` targeting the ring
