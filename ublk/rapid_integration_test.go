@@ -128,7 +128,12 @@ func (s *rapidSM) createDevice(t *rapid.T) {
 	if len(s.live) >= rapidMaxLive {
 		t.Skip("max live devices reached")
 	}
-	if s.totalCreated >= rapidMaxCreates {
+	// rapidMaxCreates caps total ublk.New calls per Run to bound
+	// runtime. We MUST lift the cap when no live devices remain,
+	// otherwise every other action (read/write/fsync/close) would
+	// also skip ("no live devices") and rapid would fail the Run with
+	// "can't find a valid (non-skipped) action".
+	if s.totalCreated >= rapidMaxCreates && len(s.live) > 0 {
 		t.Skip("max creates per Run reached")
 	}
 
