@@ -6,7 +6,34 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
+
+// newRingOrSkip wraps New with a skip-on-resource-exhaustion guard.
+//
+// Under coverage-guided fuzzing the framework spins up GOMAXPROCS-many
+// workers that each construct a fresh ring per iteration, which can
+// briefly outpace the kernel's release of mmap'd ring pages and trip
+// per-process memlock / io_uring resource accounting. The CI runner's
+// default RLIMIT_MEMLOCK is small enough that this manifests as
+// `io_uring_setup: cannot allocate memory` (ENOMEM) within a few
+// seconds of fuzzing — a kernel resource-limit symptom, not a bug in
+// our ring arithmetic. Treat ENOMEM (and ENOSYS, for kernels without
+// io_uring) as Skip so the fuzz signal reflects only correctness
+// regressions in our own code.
+func newRingOrSkip(tb testing.TB, entries uint32) *Ring {
+	tb.Helper()
+	r, err := New(entries)
+	if err == nil {
+		return r
+	}
+	if errors.Is(err, unix.ENOMEM) || errors.Is(err, unix.ENOSYS) {
+		tb.Skipf("io_uring_setup unavailable in this environment: %v", err)
+	}
+	tb.Fatalf("New: %v", err)
+	return nil
+}
 
 // FuzzRingSubmit drives the SQ/CQ head-tail arithmetic with arbitrary
 // submission patterns. The fuzzer input is a byte stream that we slice
@@ -34,10 +61,7 @@ func FuzzRingSubmit(f *testing.F) {
 		}
 		const ringSize = 16
 
-		r, err := New(ringSize)
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
+		r := newRingOrSkip(t, ringSize)
 		defer r.Close()
 
 		var nextID uint64 = 1
@@ -138,10 +162,7 @@ func FuzzRingCancel(f *testing.F) {
 		delay := time.Duration(int(delayBits)%6) * time.Millisecond
 
 		const ringSize = 16
-		r, err := New(ringSize)
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
+		r := newRingOrSkip(t, ringSize)
 		defer r.Close()
 
 		var (
