@@ -549,34 +549,6 @@ corpus entries; the `-fuzz` flag enables coverage-guided mutation. No kernel
 or root access needed. Corpus entries that find new coverage are committed to
 `ublk/uring/testdata/fuzz/`.
 
-### Linearizability checking (done)
-
-Implemented as `TestRapidLinearizability` in
-`ublk/porcupine_integration_test.go` (build tag `integration`,
-runnable via `make test-linz`). Pinned dependency:
-`github.com/anishathalye/porcupine v1.1.0`.
-
-The harness drives a small worker pool (default 4 goroutines, 200
-total ops; tunable via `UBLK_LINZ_WORKERS` and `UBLK_LINZ_OPS`)
-against a single 256 KiB device, recording wall-clock `Call`/`Return`
-timestamps for every `pread`/`pwrite`. Each write embeds a unique
-8-byte stamp at the start of its 4 KiB block; reads recover the
-stamp from the bytes returned. The porcupine `Model` is one register
-per 4 KiB block (`map[int]uint64`, block index → most-recent stamp,
-zero meaning "never written"), and `porcupine.CheckOperationsVerbose`
-decides whether the recorded history is linearizable, with a 30 s
-budget. Illegal histories are written out as an interactive HTML
-visualization via `porcupine.VisualizePath`.
-
-This is implemented as a separate test rather than instrumenting
-`TestRapidStateMachine` because rapid drives a strictly sequential
-state machine — the resulting history is trivially linearizable, so
-the check only adds value once concurrent goroutines hit the same
-device. `TestRapidStateMachine` remains the per-operation invariant
-checker (point-in-time correctness, shrinkable failures);
-`TestRapidLinearizability` is the global ordering checker (real-time
-total order across all clients).
-
 ### Syzkaller for kernel-level ublk fuzzing
 
 [syzkaller](https://github.com/google/syzkaller) is Google's
