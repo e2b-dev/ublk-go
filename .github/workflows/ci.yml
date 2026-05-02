@@ -125,9 +125,10 @@ jobs:
         #
         # The Azure-hosted apt mirror (`azure.archive.ubuntu.com`) flakes
         # with `Temporary failure resolving` from time to time, so we
-        # retry both update and install up to 5x with exponential
-        # backoff before giving up. Without this, every transient mirror
-        # blip fails the entire integration job for every PR in flight.
+        # retry both update and install up to 6 attempts with exponential
+        # backoff (sleeps of 5s, 10s, 20s, 40s, 80s between attempts)
+        # before giving up. Without this, every transient mirror blip
+        # fails the entire integration job for every PR in flight.
         run: |
           set -eux
           if sudo modprobe ublk_drv 2>/dev/null; then
@@ -135,7 +136,7 @@ jobs:
             exit 0
           fi
           retry() {
-            local n=0 max=5 delay=5
+            local n=0 max=6 delay=5
             until "$@"; do
               n=$((n+1))
               if [ "$n" -ge "$max" ]; then
