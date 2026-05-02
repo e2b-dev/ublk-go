@@ -532,33 +532,39 @@ long-running soak with fixed structure (N workers, disjoint regions). The
 lifecycle transitions (create/close mid-stream) and multiple devices, and
 produces a reproducible minimal failing case when it finds a bug.
 
-### Probabilistic chaos backend
+### Probabilistic chaos backend (done)
 
-Add a `chaosBackend` wrapper (in `ublk/` test helpers or a new
-`ublk/testutil/` package) that wraps any `Backend` and randomly injects
-failures at a configurable rate:
+Landed as `ublk/chaos_integration_test.go`. A `chaosBackend` wraps any
+`Backend` and probabilistically returns `unix.EIO` and/or injects a
+uniform random delay `[0, MaxDelay]` before delegating. Configuration
+(`WriteErrorRate`, `ReadErrorRate`, `MaxDelay`) is mutable behind a
+mutex, backed by a deterministic `math/rand/v2` PRNG seeded per-test
+for reproducibility, with atomic counters for `Writes`, `Reads`,
+`WriteErrs`, `ReadErrs`.
 
-```go
-type ChaosConfig struct {
-    WriteErrorRate float64       // fraction of WriteAt calls that return EIO
-    ReadErrorRate  float64       // fraction of ReadAt calls that return EIO
-    MaxDelay       time.Duration // uniform random delay [0, MaxDelay] per call
-}
-```
+Three integration tests exercise it:
 
-Write integration tests that drive `TestTortureRandomIO` with a chaos backend
-and verify:
-- Errors surface as `EIO` to the caller at the block device level (no hangs,
-  no panics, no silent data corruption on the successful path).
-- `Close()` terminates in bounded time even when the backend is injecting
-  errors and/or latency into in-flight IOs.
-- After the chaos backend is swapped out for a healthy one, subsequent reads
-  return correct data (no residual corruption state in the worker or ring).
+- `TestChaosErrorsPropagateAsEIO` — 50% write / 50% read error rate, no
+  delay; asserts every non-nil IO error is `EIO` and the observed error
+  fraction lies within a wide tolerance band around the configured rate
+  (so the wrapper is demonstrably active).
+- `TestChaosCloseTerminatesUnderLatency` — 0% errors, `MaxDelay = 50ms`,
+  two concurrent IO goroutines for ~1s; asserts `Device.Close()` returns
+  within 10s after user fds are closed (mirrors
+  `TestCloseAfterBackendErrors`).
+- `TestChaosRecovery` — 100% write error rate for N writes (asserts each
+  returns `EIO`), then flips the wrapper to passthrough and asserts N
+  write+read roundtrips return exactly the bytes written, verifying no
+  residual corruption from the error phase.
 
-**Why this is distinct from `fault_integration_test.go`:** the existing fault
-tests use fully-on or fully-off failure modes with a static config. The chaos
-backend exercises partial failure rates and latency injection, which is the
-realistic failure mode for remote or unreliable storage backends.
+Run in isolation with `make test-chaos`. The tests carry the
+`//go:build integration` tag and are picked up by the existing
+`test-integration` CI job; no separate CI plumbing required.
+
+**Why this is distinct from `fault_integration_test.go`:** the existing
+fault tests use fully-on or fully-off failure modes with no latency.
+Chaos exercises partial failure rates and latency injection, which is
+the realistic failure mode for remote or unreliable storage backends.
 
 ### Go native fuzz tests for `ublk/uring/`
 
