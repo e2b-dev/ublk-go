@@ -1,3 +1,5 @@
+github.com/anishathalye/porcupine v1.1.0 h1:jkMLqDejaWqvhvjxYKyqwQO3d1Jw+/08wHiIw0O4wcU=
+github.com/anishathalye/porcupine v1.1.0/go.mod h1:WM0SsFjWNl2Y4BqHr/E/ll2yY1GY1jqn+W7Z/84Zoog=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
 golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 pgregory.net/rapid v1.3.0 h1:vBvO0VSqti75J1jjYqpgPNBLKMd1+gxa9fYo7vk/Exc=
