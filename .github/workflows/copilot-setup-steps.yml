@@ -23,10 +23,30 @@ jobs:
           go-version: "1.25"
           check-latest: false
       - name: Install repo tooling
+        # The Azure-hosted apt mirror (`azure.archive.ubuntu.com`) flakes
+        # with `Temporary failure resolving` from time to time, so we
+        # retry both update and install up to 6 attempts with exponential
+        # backoff (sleeps of 5s, 10s, 20s, 40s, 80s between attempts)
+        # before giving up. Without this, every transient mirror blip
+        # fails copilot-setup-steps for every PR in flight. Same helper
+        # is used in `.github/workflows/ci.yml` for consistency.
         run: |
           set -eux
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends e2fsprogs kmod
+          retry() {
+            local n=0 max=6 delay=5
+            until "$@"; do
+              n=$((n+1))
+              if [ "$n" -ge "$max" ]; then
+                echo "command failed after $n attempts: $*" >&2
+                return 1
+              fi
+              echo "attempt $n failed; sleeping ${delay}s and retrying: $*" >&2
+              sleep "$delay"
+              delay=$((delay*2))
+            done
+          }
+          retry sudo apt-get update -qq
+          retry sudo apt-get install -y --no-install-recommends e2fsprogs kmod
           curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/${{ env.GOLANGCI_LINT_VERSION }}/install.sh" \
             | sh -s -- -b "$(go env GOPATH)/bin" "${{ env.GOLANGCI_LINT_VERSION }}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -34,10 +54,27 @@ jobs:
       - name: Prime Go module cache
         run: go mod download
       - name: Load ublk kernel module
+        # See "Install repo tooling" above for why we retry apt-get
+        # against the Azure mirror.
         run: |
           set -eux
-          if ! sudo modprobe ublk_drv 2>/dev/null; then
-            sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
-            sudo modprobe ublk_drv
+          if sudo modprobe ublk_drv 2>/dev/null; then
+            ls -l /dev/ublk-control
+            exit 0
           fi
+          retry() {
+            local n=0 max=6 delay=5
+            until "$@"; do
+              n=$((n+1))
+              if [ "$n" -ge "$max" ]; then
+                echo "command failed after $n attempts: $*" >&2
+                return 1
+              fi
+              echo "attempt $n failed; sleeping ${delay}s and retrying: $*" >&2
+              sleep "$delay"
+              delay=$((delay*2))
+            done
+          }
+          retry sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+          sudo modprobe ublk_drv
           ls -l /dev/ublk-control
