@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TestRapidLinearizability is the post-processing companion to
+// TestPorcupineLinearizability is the post-processing companion to
 // TestRapidStateMachine. The rapid state machine asserts a per-action
 // invariant — "after this single Read, the bytes match my shadow" —
 // which is sufficient when actions are sequential. As soon as several
@@ -52,7 +52,7 @@ import (
 // fd-close-before-Close discipline (AGENTS.md): the user fd opened on
 // /dev/ublkbN is closed before Device.Close so del_gendisk does not
 // block waiting on the open ref to drop.
-func TestRapidLinearizability(t *testing.T) {
+func TestPorcupineLinearizability(t *testing.T) {
 	const (
 		blockSize    = 4096
 		numBlocks    = 64                    // → 256 KiB device, model state stays small
