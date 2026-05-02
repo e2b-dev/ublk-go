@@ -560,28 +560,6 @@ tests use fully-on or fully-off failure modes with a static config. The chaos
 backend exercises partial failure rates and latency injection, which is the
 realistic failure mode for remote or unreliable storage backends.
 
-### Go native fuzz tests for `ublk/uring/` (done)
-
-Implemented in `ublk/uring/fuzz_test.go` with two targets:
-
-- **`FuzzRingSubmit`** drives arbitrary submission patterns (variable
-  batch sizes drawn from the fuzzer input) and asserts every submitted
-  `UserData` is returned exactly once across many submit/drain cycles.
-  Regression guard for `flushSQ` / `WaitCQE` / `nextSQE` arithmetic.
-- **`FuzzRingCancel`** runs two producer goroutines and one consumer in
-  parallel, then calls `Cancel` after a fuzzer-derived delay. The
-  consumer must observe `ErrCancelled` within 2s even though the CQ is
-  kept non-empty by the producers — direct guard for the fast-path
-  cancel race documented in AGENTS.md.
-
-The seed corpus runs as part of the standard unit-test job. The
-unit-test job also runs each target under coverage-guided mutation
-for 10s per PR (folded into `make test-unit` so local and CI runs
-match). For longer campaigns: `make fuzz-uring` (default 30s/target)
-or `FUZZTIME=2m make fuzz-uring`. Crashers are uploaded as a CI
-artifact; commit the reproducer to `ublk/uring/testdata/fuzz/` if any
-are found.
-
 ### Linearizability checking (extension of the `rapid` state machine test)
 
 Once the `rapid` state machine test (above) is in place, instrument it to
