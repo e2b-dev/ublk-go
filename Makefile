@@ -5,7 +5,6 @@ test: test-unit test-integration
 test-unit:
 	go test -v -count=1 -race ./ublk/uring/ ./ublk/
 	@$(MAKE) fuzz-uring FUZZTIME=10s
-	@$(MAKE) fuzz-uring FUZZTIME=10s
 
 test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
