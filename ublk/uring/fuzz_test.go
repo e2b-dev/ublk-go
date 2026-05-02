@@ -54,7 +54,6 @@ func FuzzRingSubmit(f *testing.F) {
 			// don't want to test here (that's the ring-full case
 			// already covered by TestNewSQE128 / TestManyCycles).
 			batch := int(data[bi]) % (ringSize + 1)
-			ids := make([]uint64, 0, batch)
 			for i := 0; i < batch; i++ {
 				sqe := r.GetSQE64()
 				if sqe == nil {
@@ -65,7 +64,6 @@ func FuzzRingSubmit(f *testing.F) {
 				}
 				sqe.Opcode = 0 // NOP
 				sqe.UserData = nextID
-				ids = append(ids, nextID)
 				nextID++
 			}
 

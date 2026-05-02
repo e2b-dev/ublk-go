@@ -574,12 +574,13 @@ Implemented in `ublk/uring/fuzz_test.go` with two targets:
   kept non-empty by the producers — direct guard for the fast-path
   cancel race documented in AGENTS.md.
 
-The seed corpus runs as part of the standard unit-test job (`go test
-./ublk/uring/`). CI also runs each target under coverage-guided
-mutation for 15s per PR (`fuzz-uring` job). Locally:
-`make fuzz-uring` (default 30s/target) or `FUZZTIME=2m make
-fuzz-uring`. Crashers are uploaded as a CI artifact; commit the
-reproducer to `ublk/uring/testdata/fuzz/` if any are found.
+The seed corpus runs as part of the standard unit-test job. The
+unit-test job also runs each target under coverage-guided mutation
+for 10s per PR (folded into `make test-unit` so local and CI runs
+match). For longer campaigns: `make fuzz-uring` (default 30s/target)
+or `FUZZTIME=2m make fuzz-uring`. Crashers are uploaded as a CI
+artifact; commit the reproducer to `ublk/uring/testdata/fuzz/` if any
+are found.
 
 ### Linearizability checking (extension of the `rapid` state machine test)
 
