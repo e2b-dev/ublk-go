@@ -1,13 +1,26 @@
-.PHONY: test test-unit test-integration test-rapid test-linz cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration test-rapid test-linz fuzz-uring fuzz-uring-submit fuzz-uring-cancel cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
 test-unit:
 	go test -v -count=1 -race ./ublk/uring/ ./ublk/
+	@$(MAKE) fuzz-uring FUZZTIME=10s
 
 test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=300s
+
+# Run the io_uring fuzz targets back-to-back. Default budget is 30s
+# per target, override with FUZZTIME=2m make fuzz-uring (or longer).
+# These targets need no kernel module and no root.
+FUZZTIME ?= 30s
+fuzz-uring: fuzz-uring-submit fuzz-uring-cancel
+
+fuzz-uring-submit:
+	go test -run=^$$ -fuzz=FuzzRingSubmit -fuzztime=$(FUZZTIME) ./ublk/uring/
+
+fuzz-uring-cancel:
+	go test -run=^$$ -fuzz=FuzzRingCancel -fuzztime=$(FUZZTIME) ./ublk/uring/
 
 # Run only the rapid property-based state-machine tests. Same binary as
 # test-integration but filtered to TestRapid* for quick iteration when

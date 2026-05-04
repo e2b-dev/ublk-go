@@ -527,28 +527,6 @@ tests use fully-on or fully-off failure modes with a static config. The chaos
 backend exercises partial failure rates and latency injection, which is the
 realistic failure mode for remote or unreliable storage backends.
 
-### Go native fuzz tests for `ublk/uring/`
-
-Add `FuzzXxx` functions to `ublk/uring/uring_test.go` targeting the ring
-management code. Unlike the integration tests above, these run without root or
-`ublk_drv` and can be run overnight with `go test -fuzz=.`:
-
-- **`FuzzRingSubmit`** — takes a `[]byte` seed, interprets it as a sequence of
-  (opcode, userData) pairs, submits them as NOP SQEs, drains the CQE ring,
-  and checks that every submitted `UserData` is returned exactly once. Verifies
-  that `flushSQ`, `WaitCQE`, and the ring head/tail arithmetic don't corrupt
-  or lose entries under arbitrary submission patterns.
-- **`FuzzRingCancel`** — drives concurrent `Submit` and `Cancel` from two
-  goroutines with random interleaving seeded by the fuzzer input. Checks that
-  `WaitCQE` always returns after `Cancel` is called, even when the CQ has
-  zero or many ready entries (regression guard for the fast-path cancel race
-  described in AGENTS.md).
-
-These tests run as normal unit tests (`go test ./ublk/uring/`) using seed
-corpus entries; the `-fuzz` flag enables coverage-guided mutation. No kernel
-or root access needed. Corpus entries that find new coverage are committed to
-`ublk/uring/testdata/fuzz/`.
-
 ### Syzkaller for kernel-level ublk fuzzing
 
 [syzkaller](https://github.com/google/syzkaller) is Google's
