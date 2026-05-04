@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-chaos cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration test-chaos test-rapid cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -14,6 +14,13 @@ test-integration:
 test-chaos:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=120s -test.run=TestChaos
+
+# Run only the rapid property-based state-machine tests. Same binary as
+# test-integration but filtered to TestRapid* for quick iteration when
+# debugging a shrunk failing case.
+test-rapid:
+	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
+	sudo /tmp/ublk.test -test.v -test.timeout=300s -test.run=TestRapid
 
 # Produce coverage profiles (unit + integration + combined) under ./coverage/.
 cover:

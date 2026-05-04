@@ -122,13 +122,35 @@ jobs:
         # linux-modules-extra-$(uname -r). Try modprobe first (fast path for
         # future images that bundle it), fall back to installing the extras
         # package only when needed.
+        #
+        # The Azure-hosted apt mirror (`azure.archive.ubuntu.com`) flakes
+        # with `Temporary failure resolving` from time to time, so we
+        # retry both update and install up to 6 attempts with exponential
+        # backoff (sleeps of 5s, 10s, 20s, 40s, 80s between attempts)
+        # before giving up. Without this, every transient mirror blip
+        # fails the entire integration job for every PR in flight.
         run: |
           set -eux
-          if ! sudo modprobe ublk_drv 2>/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
-            sudo modprobe ublk_drv
+          if sudo modprobe ublk_drv 2>/dev/null; then
+            ls -l /dev/ublk-control
+            exit 0
           fi
+          retry() {
+            local n=0 max=6 delay=5
+            until "$@"; do
+              n=$((n+1))
+              if [ "$n" -ge "$max" ]; then
+                echo "command failed after $n attempts: $*" >&2
+                return 1
+              fi
+              echo "attempt $n failed; sleeping ${delay}s and retrying: $*" >&2
+              sleep "$delay"
+              delay=$((delay*2))
+            done
+          }
+          retry sudo apt-get update -qq
+          retry sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+          sudo modprobe ublk_drv
           ls -l /dev/ublk-control
       - name: Run integration tests (race + coverage)
         run: |
