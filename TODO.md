@@ -499,39 +499,6 @@ utilisation, backend panic count.
 
 ## Testing
 
-### Property-based / model-based state machine tests (`rapid`)
-
-Add [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) as a test
-dependency and write a state machine test (via `rapid.T.Repeat`) for the
-device lifecycle and data plane.
-
-The test defines:
-- A **model** — a simple in-memory map of `offset → bytes` representing what
-  the device should contain.
-- A set of **commands** generated randomly by `rapid`: `Write(offset, data)`,
-  `Read(offset, len)`, `Fsync`, `Close`, `Create` (new device), plus
-  multi-device commands to check cross-device isolation.
-- **Invariants** checked after every command:
-  - A `Read` must return the bytes from the most recent `Write` at that range.
-  - Bytes written to device N must never appear on device M.
-  - `Close` must terminate within a bounded time and leave no device node.
-  - `Close` called multiple times must not panic or hang.
-
-`rapid` automatically **shrinks** any failing sequence to its minimal
-reproducer, which is the primary advantage over the existing
-`TestTortureRandomIO` (which is a long-running soak, not a shrinker).
-
-The test lives alongside the existing integration tests
-(`//go:build integration`, runs as root with `ublk_drv` loaded). Duration and
-parallelism are controlled by env vars so it fits in the normal CI timeout by
-default.
-
-**Why this is distinct from `TestTortureRandomIO`:** torture is a
-long-running soak with fixed structure (N workers, disjoint regions). The
-`rapid` state machine generates arbitrary command sequences including
-lifecycle transitions (create/close mid-stream) and multiple devices, and
-produces a reproducible minimal failing case when it finds a bug.
-
 ### Probabilistic chaos backend
 
 Add a `chaosBackend` wrapper (in `ublk/` test helpers or a new
