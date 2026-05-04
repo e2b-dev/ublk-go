@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-chaos test-rapid fuzz-uring fuzz-uring-submit fuzz-uring-cancel cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration test-chaos test-rapid test-linz fuzz-uring fuzz-uring-submit fuzz-uring-cancel cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -34,6 +34,16 @@ fuzz-uring-cancel:
 test-rapid:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=300s -test.run=TestRapid
+
+# Run only the porcupine linearizability test. Same binary as
+# test-integration but filtered to TestPorcupineLinearizability —
+# useful for iterating on the model or workload without paying the
+# full integration-suite runtime. The test is named with a Porcupine
+# prefix (rather than Rapid*) so the test-rapid target's TestRapid
+# regex does not also pick it up.
+test-linz:
+	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
+	sudo /tmp/ublk.test -test.v -test.timeout=300s -test.run=TestPorcupineLinearizability
 
 # Produce coverage profiles (unit + integration + combined) under ./coverage/.
 cover:

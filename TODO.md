@@ -499,26 +499,6 @@ utilisation, backend panic count.
 
 ## Testing
 
-### Linearizability checking (extension of the `rapid` state machine test)
-
-Once the `rapid` state machine test (above) is in place, instrument it to
-record a history of operations with wall-clock timestamps and result values,
-then feed the history to
-[`anishathalye/porcupine`](https://github.com/anishathalye/porcupine) — a Go
-linearizability checker.
-
-This formally answers: "does every read return the value of the last completed
-write that precedes it in real time, for all concurrent orderings?" — the same
-check Jepsen runs for distributed databases, applied here to a single block
-device with concurrent callers.
-
-The check is a post-processing step on the same test run; it adds no test
-infrastructure beyond adding `porcupine` as a test dependency and a history
-recorder around the model commands. If the `rapid` state machine tests pass
-but the linearizability check fails, it means concurrent reads and writes
-are producing a result that has no valid sequential explanation — a subtle
-correctness bug not caught by per-operation assertions.
-
 ### Syzkaller for kernel-level ublk fuzzing
 
 [syzkaller](https://github.com/google/syzkaller) is Google's
