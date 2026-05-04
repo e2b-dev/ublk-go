@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-rapid fuzz-uring fuzz-uring-submit fuzz-uring-cancel cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
+.PHONY: test test-unit test-integration test-chaos test-rapid fuzz-uring fuzz-uring-submit fuzz-uring-cancel cover cover-html chain flushbench flushbench-race stress fault sigkill build lint lint-fmt lint-tidy lint-vet fmt hooks
 
 test: test-unit test-integration
 
@@ -9,6 +9,12 @@ test-unit:
 test-integration:
 	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
 	sudo /tmp/ublk.test -test.v -test.timeout=300s
+
+# Run just the chaos backend integration tests. Useful for iterating
+# on the chaos wrapper without waiting for the full integration suite.
+test-chaos:
+	go test -c -race -tags=integration -o /tmp/ublk.test ./ublk/
+	sudo /tmp/ublk.test -test.v -test.timeout=120s -test.run=TestChaos
 
 # Run the io_uring fuzz targets back-to-back. Default budget is 30s
 # per target, override with FUZZTIME=2m make fuzz-uring (or longer).

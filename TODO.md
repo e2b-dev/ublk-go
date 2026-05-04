@@ -499,34 +499,6 @@ utilisation, backend panic count.
 
 ## Testing
 
-### Probabilistic chaos backend
-
-Add a `chaosBackend` wrapper (in `ublk/` test helpers or a new
-`ublk/testutil/` package) that wraps any `Backend` and randomly injects
-failures at a configurable rate:
-
-```go
-type ChaosConfig struct {
-    WriteErrorRate float64       // fraction of WriteAt calls that return EIO
-    ReadErrorRate  float64       // fraction of ReadAt calls that return EIO
-    MaxDelay       time.Duration // uniform random delay [0, MaxDelay] per call
-}
-```
-
-Write integration tests that drive `TestTortureRandomIO` with a chaos backend
-and verify:
-- Errors surface as `EIO` to the caller at the block device level (no hangs,
-  no panics, no silent data corruption on the successful path).
-- `Close()` terminates in bounded time even when the backend is injecting
-  errors and/or latency into in-flight IOs.
-- After the chaos backend is swapped out for a healthy one, subsequent reads
-  return correct data (no residual corruption state in the worker or ring).
-
-**Why this is distinct from `fault_integration_test.go`:** the existing fault
-tests use fully-on or fully-off failure modes with a static config. The chaos
-backend exercises partial failure rates and latency injection, which is the
-realistic failure mode for remote or unreliable storage backends.
-
 ### Linearizability checking (extension of the `rapid` state machine test)
 
 Once the `rapid` state machine test (above) is in place, instrument it to
