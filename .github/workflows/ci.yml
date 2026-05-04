@@ -79,6 +79,24 @@ jobs:
           set -eux
           mkdir -p coverage
           go test -v -count=1 -race -coverprofile=coverage/unit.out -coverpkg=./ublk/... ./ublk/uring/ ./ublk/
+      # Short coverage-guided mutation pass on top of the seed corpus
+      # (which already ran above as part of `go test`). 10s/target
+      # keeps CI cost low while still exercising the mutator. Use
+      # `make fuzz-uring` (default 30s/target) or FUZZTIME=2m for
+      # longer local campaigns.
+      - name: Fuzz uring (short)
+        run: |
+          set -eux
+          go test -run=^$ -fuzz=FuzzRingSubmit -fuzztime=10s ./ublk/uring/
+          go test -run=^$ -fuzz=FuzzRingCancel -fuzztime=10s ./ublk/uring/
+      - name: Upload fuzz crashers (if any)
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fuzz-uring-crashers-${{ matrix.arch }}
+          path: ublk/uring/testdata/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Coverage summary
         if: matrix.arch == 'amd64'
         run: |
