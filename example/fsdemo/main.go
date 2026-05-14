@@ -78,7 +78,7 @@ func main() {
 func run() error {
 	backend := &loggingBackend{data: make([]byte, devSize)}
 
-	dev, err := ublk.New(backend, devSize)
+	dev, err := ublk.New(backend, ublk.Config{Size: devSize})
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}

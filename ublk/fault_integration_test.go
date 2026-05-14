@@ -46,7 +46,7 @@ func TestBackendWriteErrorPropagates(t *testing.T) {
 
 	backend := newFaultBackend()
 	backend.failWrites = true
-	dev, err := New(backend, testFaultDeviceSize)
+	dev, err := New(backend, Config{Size: testFaultDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestBackendReadErrorPropagates(t *testing.T) {
 
 	backend := newFaultBackend()
 	backend.failReads = true
-	dev, err := New(backend, testFaultDeviceSize)
+	dev, err := New(backend, Config{Size: testFaultDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestCloseAfterBackendErrors(t *testing.T) {
 
 	backend := newFaultBackend()
 	backend.failWrites = true
-	dev, err := New(backend, testFaultDeviceSize)
+	dev, err := New(backend, Config{Size: testFaultDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

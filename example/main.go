@@ -36,7 +36,7 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
 }
 
 func main() {
-	dev, err := ublk.New(&memBackend{data: make([]byte, size)}, size)
+	dev, err := ublk.New(&memBackend{data: make([]byte, size)}, ublk.Config{Size: size})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ublk.New: %v\n", err)
 		os.Exit(1)

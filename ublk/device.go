@@ -2,6 +2,7 @@ package ublk
 
 import (
 	"fmt"
+	"math/bits"
 	"os"
 	"runtime"
 	"sync"
@@ -115,17 +116,18 @@ func (d *Device) openCharDev() error {
 	return fmt.Errorf("char device %s not created: %w", path, err)
 }
 
-func (d *Device) setParams(size uint64, maxSectors uint32) error {
+func (d *Device) setParams(cfg Config, maxSectors uint32) error {
+	bsShift := uint8(bits.TrailingZeros32(cfg.BlockSize))
 	params := ublkParams{
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
 		Basic: paramBasic{
-			LogicalBSShift:  9,
-			PhysicalBSShift: 9,
-			IOOptShift:      9,
-			IOMinShift:      9,
+			LogicalBSShift:  bsShift,
+			PhysicalBSShift: bsShift,
+			IOOptShift:      bsShift,
+			IOMinShift:      bsShift,
 			MaxSectors:      maxSectors,
-			DevSectors:      size / 512,
+			DevSectors:      cfg.Size / 512,
 		},
 	}
 
@@ -135,7 +137,7 @@ func (d *Device) setParams(size uint64, maxSectors uint32) error {
 	if d.zeroer != nil {
 		params.Types |= paramTypeDiscard
 		params.Discard = paramDiscard{
-			DiscardGranularity:    512,
+			DiscardGranularity:    cfg.BlockSize,
 			MaxDiscardSectors:     1 << 21, // 1 GiB
 			MaxWriteZeroesSectors: 1 << 21,
 			MaxDiscardSegments:    1,

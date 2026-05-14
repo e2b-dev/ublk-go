@@ -131,7 +131,7 @@ func runChain(stepTimeout time.Duration) error {
 	// --- bottom of stack: storage ublk, in-memory backend ---
 	storageBackend := &memBackend{data: make([]byte, chainSize)}
 
-	storage, err := ublk.New(storageBackend, chainSize)
+	storage, err := ublk.New(storageBackend, ublk.Config{Size: chainSize})
 	if err != nil {
 		return fmt.Errorf("create storage ublk: %w", err)
 	}
@@ -152,7 +152,7 @@ func runChain(stepTimeout time.Duration) error {
 	// --- top of stack: proxy ublk, forwards to storage's block dev ---
 	proxyBackend := &fdBackend{fd: storageFd}
 
-	proxy, err := ublk.New(proxyBackend, chainSize)
+	proxy, err := ublk.New(proxyBackend, ublk.Config{Size: chainSize})
 	if err != nil {
 		return fmt.Errorf("create proxy ublk: %w", err)
 	}

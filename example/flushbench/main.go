@@ -133,7 +133,7 @@ func run() error {
 	tr := &trace{t0: time.Now()}
 	be := &tracingBackend{data: make([]byte, devSize), tr: tr}
 
-	dev, err := ublk.New(be, devSize)
+	dev, err := ublk.New(be, ublk.Config{Size: devSize})
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}

@@ -63,7 +63,7 @@ func TestBackendWithoutZeroerRejectsDiscard(t *testing.T) {
 func TestBlkDiscardRoundTrip(t *testing.T) {
 	t.Parallel()
 	backend := newZeroBackend(testZeroesDeviceSize)
-	dev, err := New(backend, testZeroesDeviceSize)
+	dev, err := New(backend, Config{Size: testZeroesDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBlkDiscardRoundTrip(t *testing.T) {
 func TestBlkZeroOutRoundTrip(t *testing.T) {
 	t.Parallel()
 	backend := newZeroBackend(testZeroesDeviceSize)
-	dev, err := New(backend, testZeroesDeviceSize)
+	dev, err := New(backend, Config{Size: testZeroesDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestBlkDiscardLargerThanMaxBuf(t *testing.T) {
 	// 1 MiB discard is 8× larger than the data-plane buffer (128 KiB);
 	// the worker must dispatch it without splitting through w.bufs.
 	backend := newZeroBackend(testZeroesDeviceSize)
-	dev, err := New(backend, testZeroesDeviceSize)
+	dev, err := New(backend, Config{Size: testZeroesDeviceSize})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

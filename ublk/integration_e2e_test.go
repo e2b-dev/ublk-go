@@ -30,7 +30,7 @@ func TestEndToEnd(t *testing.T) {
 	)
 
 	be := newMemBackend(devSize)
-	dev, err := New(be, devSize)
+	dev, err := New(be, Config{Size: devSize})
 	if err != nil {
 		t.Fatalf("ublk.New: %v", err)
 	}

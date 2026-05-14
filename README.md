@@ -142,7 +142,7 @@ func (m *memBackend) WriteAt(p []byte, off int64) (int, error) {
 
 func main() {
     const size = 256 * 1024 * 1024
-    dev, err := ublk.New(&memBackend{data: make([]byte, size)}, size)
+    dev, err := ublk.New(&memBackend{data: make([]byte, size)}, ublk.Config{Size: size})
     if err != nil {
         fmt.Fprintln(os.Stderr, err)
         os.Exit(1)
@@ -179,13 +179,19 @@ type ZeroWriter interface {
     WriteZeroesAt(off, length int64) (int, error)
 }
 
-func New(backend Backend, size uint64) (*Device, error)
+// Config configures a new Device. Size is required; every other field
+// defaults when zero.
+type Config struct {
+    Size       uint64 // device size in bytes; multiple of BlockSize
+    BlockSize  uint32 // logical/physical block size; default 512, power of two
+    QueueDepth uint16 // in-flight IOs; default 128, max 4096
+    MaxIOSize  uint32 // largest single IO in bytes; default 128 KiB, multiple of BlockSize
+}
+
+func New(backend Backend, cfg Config) (*Device, error)
 func (*Device) Path() string
 func (*Device) Close() error
 ```
-
-`size` must be a positive multiple of 512. The block device uses
-512-byte logical blocks, 128KB max IO, and a single queue with depth 128.
 
 ### Closing a device
 

@@ -138,7 +138,7 @@ func (s *rapidSM) createDevice(t *rapid.T) {
 	}
 
 	be := newMemBackend(rapidDevSize)
-	dev, err := New(be, rapidDevSize)
+	dev, err := New(be, Config{Size: rapidDevSize})
 	if err != nil {
 		t.Fatalf("ublk.New: %v", err)
 	}
