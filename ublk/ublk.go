@@ -11,25 +11,33 @@ import (
 // satisfy io.ReaderAt and io.WriterAt, whose contracts already require
 // that concurrent calls on disjoint ranges are safe — we rely on that
 // to let the kernel submit IO with queue depth 128.
-//
-// Backends may additionally implement [ZeroWriter] to advertise
-// DISCARD / WRITE_ZEROES support to the kernel. Both operations are
-// routed to WriteZeroesAt; matching the semantics of the NBD
-// dispatcher in github.com/e2b-dev/infra.
 type Backend interface {
 	io.ReaderAt
 	io.WriterAt
 }
 
-// ZeroWriter is an optional Backend capability that handles
-// DISCARD / WRITE_ZEROES requests. If a Backend implements it, the
-// kernel is told the device supports both operations and routes them
-// here; otherwise the kernel will not issue them.
-//
-// off and length are byte-granular; both are sector-aligned.
-type ZeroWriter interface {
-	WriteZeroesAt(off, length int64) (int, error)
+// Discarder is an optional Backend capability. When implemented, the
+// kernel may issue DISCARD against the device; the range contents are
+// undefined after a successful call.
+type Discarder interface {
+	DiscardAt(off, length int64) (int, error)
 }
+
+// ZeroWriter is an optional Backend capability. When implemented, the
+// kernel may issue WRITE_ZEROES against the device; subsequent reads
+// of the range must return zeros.
+type ZeroWriter interface {
+	WriteZeroesAt(off, length int64, flags ZeroFlags) (int, error)
+}
+
+// ZeroFlags are per-op modifiers for [ZeroWriter.WriteZeroesAt].
+type ZeroFlags uint8
+
+const (
+	// ZeroNoUnmap signals that the caller wants the range to remain
+	// physically allocated (no hole punching / unmap).
+	ZeroNoUnmap ZeroFlags = 1 << iota
+)
 
 // New creates a ublk block device. backend must be non-nil. Size must be a
 // positive multiple of 512. Call Device.Close() to stop and remove the device.
