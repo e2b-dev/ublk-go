@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 func makeDevice(t *testing.T, size uint64) (*Device, *memBackend) {
 	t.Helper()
 	backend := newMemBackend(int(size))
-	dev, err := New(backend, Config{Size: size})
+	dev, err := New(backend, size)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRepeatedCreateDestroy(t *testing.T) {
 	t.Parallel()
 	for cycle := range 5 {
 		backend := newMemBackend(2 * 1024 * 1024)
-		dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
+		dev, err := New(backend, 2*1024*1024)
 		if err != nil {
 			t.Fatalf("cycle %d New: %v", cycle, err)
 		}
@@ -278,7 +278,7 @@ func TestRandomIOVerified(t *testing.T) {
 func TestCloseIdempotent(t *testing.T) {
 	t.Parallel()
 	backend := newMemBackend(2 * 1024 * 1024)
-	dev, err := New(backend, Config{Size: 2 * 1024 * 1024})
+	dev, err := New(backend, 2*1024*1024)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestReadUnwrittenRegion(t *testing.T) {
 func TestPath(t *testing.T) {
 	t.Parallel()
 	backend := newMemBackend(1024 * 1024)
-	dev, err := New(backend, Config{Size: 1024 * 1024})
+	dev, err := New(backend, 1024*1024)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestMultipleDevices(t *testing.T) {
 	devs := make([]*Device, n)
 	for i := range n {
 		backend := newMemBackend(1024 * 1024)
-		dev, err := New(backend, Config{Size: 1024 * 1024})
+		dev, err := New(backend, 1024*1024)
 		if err != nil {
 			for j := range i {
 				devs[j].Close()

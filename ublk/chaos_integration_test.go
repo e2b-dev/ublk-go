@@ -146,7 +146,7 @@ func TestChaosErrorsPropagateAsEIO(t *testing.T) {
 
 	mem := newMemBackend(chaosDefaultDevSize)
 	chaos := newChaosBackend(mem, 0x1f2e3d4c5b6a7980, 0.5, 0.5, 0)
-	dev, err := New(chaos, Config{Size: chaosDefaultDevSize})
+	dev, err := New(chaos, chaosDefaultDevSize)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestChaosCloseTerminatesUnderLatency(t *testing.T) {
 
 	mem := newMemBackend(chaosDefaultDevSize)
 	chaos := newChaosBackend(mem, 0xabad1deadeadbeef, 0, 0, 50*time.Millisecond)
-	dev, err := New(chaos, Config{Size: chaosDefaultDevSize})
+	dev, err := New(chaos, chaosDefaultDevSize)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestChaosRecovery(t *testing.T) {
 
 	mem := newMemBackend(chaosDefaultDevSize)
 	chaos := newChaosBackend(mem, 0xcafef00dd15ea5e, 1.0, 0, 0)
-	dev, err := New(chaos, Config{Size: chaosDefaultDevSize})
+	dev, err := New(chaos, chaosDefaultDevSize)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

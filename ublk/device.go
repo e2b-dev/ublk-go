@@ -116,8 +116,8 @@ func (d *Device) openCharDev() error {
 	return fmt.Errorf("char device %s not created: %w", path, err)
 }
 
-func (d *Device) setParams(cfg Config, maxSectors uint32) error {
-	bsShift := uint8(bits.TrailingZeros32(cfg.BlockSize))
+func (d *Device) setParams(size uint64, cfg config, maxSectors uint32) error {
+	bsShift := uint8(bits.TrailingZeros32(cfg.blockSize))
 	params := ublkParams{
 		Len:   uint32(unsafe.Sizeof(ublkParams{})),
 		Types: paramTypeBasic,
@@ -127,20 +127,20 @@ func (d *Device) setParams(cfg Config, maxSectors uint32) error {
 			IOOptShift:      bsShift,
 			IOMinShift:      bsShift,
 			MaxSectors:      maxSectors,
-			DevSectors:      cfg.Size / 512,
+			DevSectors:      size / 512,
 		},
 	}
 
 	// Per-capability advertisement: only what the backend implements is
 	// enabled, so the kernel won't issue an op we'd have to refuse.
 	if d.discarder != nil || d.zeroer != nil {
-		const maxSectors uint32 = 1 << 21 // 1 GiB per op
-		p := paramDiscard{DiscardGranularity: cfg.BlockSize, MaxDiscardSegments: 1}
+		const maxSect uint32 = 1 << 21 // 1 GiB per op
+		p := paramDiscard{DiscardGranularity: cfg.blockSize, MaxDiscardSegments: 1}
 		if d.discarder != nil {
-			p.MaxDiscardSectors = maxSectors
+			p.MaxDiscardSectors = maxSect
 		}
 		if d.zeroer != nil {
-			p.MaxWriteZeroesSectors = maxSectors
+			p.MaxWriteZeroesSectors = maxSect
 		}
 		params.Types |= paramTypeDiscard
 		params.Discard = p

@@ -91,7 +91,7 @@ func main() {
 // returns.
 func runChild() {
 	backend := &memBackend{data: make([]byte, devSize)}
-	dev, err := ublk.New(backend, ublk.Config{Size: devSize})
+	dev, err := ublk.New(backend, devSize)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "child: ublk.New: %v\n", err)
 		os.Exit(2)
@@ -173,7 +173,7 @@ func runParent() error {
 	// check for that below as an *informational* post-test signal,
 	// not a pass/fail criterion. Our code can do nothing about it.
 	newStart := time.Now()
-	dev2, err := ublk.New(&memBackend{data: make([]byte, devSize)}, ublk.Config{Size: devSize})
+	dev2, err := ublk.New(&memBackend{data: make([]byte, devSize)}, devSize)
 	if err != nil {
 		return fmt.Errorf("parent New after child SIGKILL (within %v): %w",
 			time.Since(newStart).Truncate(time.Millisecond), err)

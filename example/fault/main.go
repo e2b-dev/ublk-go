@@ -144,7 +144,7 @@ func lowRate() error {
 	b := newFaulty()
 	b.setWriteFail(0.10)
 
-	dev, err := ublk.New(b, ublk.Config{Size: devSize})
+	dev, err := ublk.New(b, devSize)
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}
@@ -194,7 +194,7 @@ func totalWriteFail() error {
 	b := newFaulty()
 	b.setWriteFail(1.0)
 
-	dev, err := ublk.New(b, ublk.Config{Size: devSize})
+	dev, err := ublk.New(b, devSize)
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}
@@ -230,7 +230,7 @@ func totalReadFail() error {
 	b := newFaulty()
 	b.setReadFail(1.0)
 
-	dev, err := ublk.New(b, ublk.Config{Size: devSize})
+	dev, err := ublk.New(b, devSize)
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}
@@ -266,7 +266,7 @@ func closeWithErrors() error {
 	b := newFaulty()
 	b.setWriteFail(1.0)
 
-	dev, err := ublk.New(b, ublk.Config{Size: devSize})
+	dev, err := ublk.New(b, devSize)
 	if err != nil {
 		return fmt.Errorf("ublk.New: %w", err)
 	}

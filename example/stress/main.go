@@ -171,7 +171,7 @@ func main() {
 func churn(ctx context.Context, _ int) summary {
 	var sm summary
 	for ctx.Err() == nil {
-		dev, err := ublk.New(newMemBackend(), ublk.Config{Size: devSize})
+		dev, err := ublk.New(newMemBackend(), devSize)
 		if err != nil {
 			sm.ioErrors++
 			time.Sleep(10 * time.Millisecond)
@@ -203,7 +203,7 @@ func churn(ctx context.Context, _ int) summary {
 func ioWhileClose(ctx context.Context, workers int) summary {
 	var sm summary
 	for ctx.Err() == nil {
-		dev, err := ublk.New(newMemBackend(), ublk.Config{Size: devSize})
+		dev, err := ublk.New(newMemBackend(), devSize)
 		if err != nil {
 			sm.ioErrors++
 			continue
@@ -282,7 +282,7 @@ func ioWhileClose(ctx context.Context, workers int) summary {
 func concurrentClose(ctx context.Context, workers int) summary {
 	var sm summary
 	for ctx.Err() == nil {
-		dev, err := ublk.New(newMemBackend(), ublk.Config{Size: devSize})
+		dev, err := ublk.New(newMemBackend(), devSize)
 		if err != nil {
 			sm.ioErrors++
 			continue
@@ -317,7 +317,7 @@ func manyDevices(ctx context.Context, parallel int) summary {
 		devs := make([]*ublk.Device, 0, parallel)
 		fds := make([]int, 0, parallel)
 		for range parallel {
-			d, err := ublk.New(newMemBackend(), ublk.Config{Size: devSize})
+			d, err := ublk.New(newMemBackend(), devSize)
 			if err != nil {
 				sm.ioErrors++
 				continue

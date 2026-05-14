@@ -40,23 +40,13 @@ const (
 	ZeroNoUnmap ZeroFlags = 1 << iota
 )
 
-// Config configures a new [Device]. Size is required; every other field
-// has a sensible default when left at its zero value.
-type Config struct {
-	// Size is the device size in bytes. Required, > 0, multiple of BlockSize.
-	Size uint64
+// Option configures a [Device]. Pass options after size to [New].
+type Option func(*config)
 
-	// BlockSize is the logical/physical block size in bytes. Must be a
-	// power of two and >= 512. Defaults to 512.
-	BlockSize uint32
-
-	// QueueDepth is the kernel io_uring queue depth (in-flight IOs).
-	// Must be in [1, 4096]. Defaults to 128.
-	QueueDepth uint16
-
-	// MaxIOSize is the largest single IO the kernel may submit, in bytes.
-	// Must be a positive multiple of BlockSize. Defaults to 128 KiB.
-	MaxIOSize uint32
+type config struct {
+	blockSize  uint32
+	queueDepth uint16
+	maxIOSize  uint32
 }
 
 const (
@@ -65,46 +55,60 @@ const (
 	defaultMaxIOSize  uint32 = 128 * 1024
 )
 
-func (c *Config) applyDefaults() {
-	if c.BlockSize == 0 {
-		c.BlockSize = defaultBlockSize
-	}
-	if c.QueueDepth == 0 {
-		c.QueueDepth = defaultQueueDepth
-	}
-	if c.MaxIOSize == 0 {
-		c.MaxIOSize = defaultMaxIOSize
-	}
+// WithBlockSize sets the logical/physical block size in bytes. Must
+// be a power of two and >= 512. Defaults to 512.
+func WithBlockSize(bs uint32) Option {
+	return func(c *config) { c.blockSize = bs }
 }
 
-func (c *Config) validate() error {
-	if c.Size == 0 {
+// WithQueueDepth sets the kernel io_uring queue depth (in-flight
+// IOs). Must be in [1, 4096]. Defaults to 128.
+func WithQueueDepth(d uint16) Option {
+	return func(c *config) { c.queueDepth = d }
+}
+
+// WithMaxIOSize sets the largest single IO the kernel may submit, in
+// bytes. Must be a positive multiple of the block size. Defaults to
+// 128 KiB.
+func WithMaxIOSize(n uint32) Option {
+	return func(c *config) { c.maxIOSize = n }
+}
+
+func (c config) validate(size uint64) error {
+	if size == 0 {
 		return fmt.Errorf("size must be > 0")
 	}
-	if c.BlockSize < 512 || bits.OnesCount32(c.BlockSize) != 1 {
-		return fmt.Errorf("block size must be a power of two >= 512, got %d", c.BlockSize)
+	if c.blockSize < 512 || bits.OnesCount32(c.blockSize) != 1 {
+		return fmt.Errorf("block size must be a power of two >= 512, got %d", c.blockSize)
 	}
-	if c.Size%uint64(c.BlockSize) != 0 {
-		return fmt.Errorf("size (%d) must be a multiple of block size (%d)", c.Size, c.BlockSize)
+	if size%uint64(c.blockSize) != 0 {
+		return fmt.Errorf("size (%d) must be a multiple of block size (%d)", size, c.blockSize)
 	}
-	if c.QueueDepth < 1 || c.QueueDepth > maxQueueDepth {
-		return fmt.Errorf("queue depth must be in [1, %d], got %d", maxQueueDepth, c.QueueDepth)
+	if c.queueDepth < 1 || c.queueDepth > maxQueueDepth {
+		return fmt.Errorf("queue depth must be in [1, %d], got %d", maxQueueDepth, c.queueDepth)
 	}
-	if c.MaxIOSize == 0 || c.MaxIOSize%c.BlockSize != 0 {
-		return fmt.Errorf("max IO size (%d) must be a positive multiple of block size (%d)", c.MaxIOSize, c.BlockSize)
+	if c.maxIOSize == 0 || c.maxIOSize%c.blockSize != 0 {
+		return fmt.Errorf("max IO size (%d) must be a positive multiple of block size (%d)", c.maxIOSize, c.blockSize)
 	}
 	return nil
 }
 
-// New creates a ublk block device. backend must be non-nil. cfg.Size
-// is required; other fields default when zero — see [Config].
-// Call Device.Close() to stop and remove the device.
-func New(backend Backend, cfg Config) (*Device, error) {
+// New creates a ublk block device. backend must be non-nil. size
+// must be > 0 and a multiple of the block size (default 512). Call
+// Device.Close() to stop and remove the device.
+func New(backend Backend, size uint64, opts ...Option) (*Device, error) {
 	if isNilBackend(backend) {
 		return nil, fmt.Errorf("backend must not be nil")
 	}
-	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
+	cfg := config{
+		blockSize:  defaultBlockSize,
+		queueDepth: defaultQueueDepth,
+		maxIOSize:  defaultMaxIOSize,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if err := cfg.validate(size); err != nil {
 		return nil, err
 	}
 
@@ -114,14 +118,14 @@ func New(backend Backend, cfg Config) (*Device, error) {
 	}
 	cleanup := func() { _ = dev.shutdown() }
 
-	if err := dev.addDev(1, cfg.QueueDepth, cfg.MaxIOSize); err != nil {
+	if err := dev.addDev(1, cfg.queueDepth, cfg.maxIOSize); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("add device: %w", err)
 	}
 
 	bufSize := int(dev.info.MaxIOBufBytes)
 	if bufSize == 0 {
-		bufSize = int(cfg.MaxIOSize)
+		bufSize = int(cfg.maxIOSize)
 	}
 
 	if err := dev.openCharDev(); err != nil {
@@ -129,12 +133,12 @@ func New(backend Backend, cfg Config) (*Device, error) {
 		return nil, fmt.Errorf("open char device: %w", err)
 	}
 
-	if err := dev.setParams(cfg, uint32(bufSize)/512); err != nil {
+	if err := dev.setParams(size, cfg, uint32(bufSize)/512); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("set params: %w", err)
 	}
 
-	w := newWorker(dev, 0, cfg.QueueDepth, bufSize)
+	w := newWorker(dev, 0, cfg.queueDepth, bufSize)
 	if err := w.init(); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("init queue: %w", err)

@@ -72,7 +72,7 @@ func TestPorcupineLinearizability(t *testing.T) {
 	opsPerWorker := totalOps / workers
 
 	be := newMemBackend(devSize)
-	dev, err := New(be, Config{Size: devSize})
+	dev, err := New(be, devSize)
 	if err != nil {
 		t.Fatalf("ublk.New: %v", err)
 	}

@@ -70,7 +70,7 @@ func TestBackendWithoutDiscarderRejectsDiscard(t *testing.T) {
 func TestBlkDiscardAndZeroOut(t *testing.T) {
 	t.Parallel()
 	backend := newZeroBackend()
-	dev, err := New(backend, Config{Size: testZeroesDeviceSize})
+	dev, err := New(backend, testZeroesDeviceSize)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
