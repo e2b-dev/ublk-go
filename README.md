@@ -172,11 +172,13 @@ type Backend interface {
     io.WriterAt
 }
 
-// ZeroWriter is an optional capability. If a Backend also implements it,
-// the kernel is told the device supports DISCARD / WRITE_ZEROES and
-// routes both to WriteZeroesAt. Otherwise the kernel will not issue them.
+// Optional capabilities. If a Backend implements one, the kernel may
+// issue the corresponding op against the device; otherwise it won't.
+type Discarder interface {
+    DiscardAt(off, length int64) (int, error)
+}
 type ZeroWriter interface {
-    WriteZeroesAt(off, length int64) (int, error)
+    WriteZeroesAt(off, length int64, flags ZeroFlags) (int, error)
 }
 
 // Config configures a new Device. Size is required; every other field

@@ -169,14 +169,31 @@ func (w *worker) handleIO(tag uint16) int32 {
 		}
 		return int32(n)
 
-	case opDiscard, opWriteZeroes:
+	case opDiscard:
+		if w.dev.discarder == nil {
+			return -int32(unix.EOPNOTSUPP)
+		}
+		if length == 0 {
+			return 0
+		}
+		n, err := w.dev.discarder.DiscardAt(offset, int64(length))
+		if err != nil || n != length {
+			return -int32(unix.EIO)
+		}
+		return int32(n)
+
+	case opWriteZeroes:
 		if w.dev.zeroer == nil {
 			return -int32(unix.EOPNOTSUPP)
 		}
 		if length == 0 {
 			return 0
 		}
-		n, err := w.dev.zeroer.WriteZeroesAt(offset, int64(length))
+		var flags ZeroFlags
+		if desc.OpFlags&ioFlagNoUnmap != 0 {
+			flags |= ZeroNoUnmap
+		}
+		n, err := w.dev.zeroer.WriteZeroesAt(offset, int64(length), flags)
 		if err != nil || n != length {
 			return -int32(unix.EIO)
 		}

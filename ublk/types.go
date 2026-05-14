@@ -8,6 +8,9 @@ const (
 	opDiscard     = 3
 	opWriteZeroes = 5
 
+	// ioFlagNoUnmap is UBLK_IO_F_NOUNMAP in ioDesc.OpFlags.
+	ioFlagNoUnmap = 1 << 15
+
 	flagCmdIoctlEncode = 1 << 6
 
 	maxQueueDepth = 4096

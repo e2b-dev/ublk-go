@@ -23,7 +23,8 @@ type Device struct {
 	ctrlRing  *uring.Ring
 	info      devInfo
 	backend   Backend
-	zeroer    ZeroWriter // nil if backend does not implement ZeroWriter
+	discarder Discarder  // non-nil iff backend implements Discarder
+	zeroer    ZeroWriter // non-nil iff backend implements ZeroWriter
 	useIoctl  bool
 	workers   []*worker
 	wg        sync.WaitGroup
@@ -49,9 +50,8 @@ func openDevice(backend Backend) (*Device, error) {
 		ctrlRing: ctrlRing,
 		backend:  backend,
 	}
-	if zw, ok := backend.(ZeroWriter); ok {
-		d.zeroer = zw
-	}
+	d.discarder, _ = backend.(Discarder)
+	d.zeroer, _ = backend.(ZeroWriter)
 	return d, nil
 }
 
@@ -131,17 +131,19 @@ func (d *Device) setParams(cfg Config, maxSectors uint32) error {
 		},
 	}
 
-	// Advertise DISCARD / WRITE_ZEROES only if the backend can serve them.
-	// 1 GiB cap matches the upper bound the kernel splits requests against;
-	// the kernel hands us each chunk in a single io desc.
-	if d.zeroer != nil {
-		params.Types |= paramTypeDiscard
-		params.Discard = paramDiscard{
-			DiscardGranularity:    cfg.BlockSize,
-			MaxDiscardSectors:     1 << 21, // 1 GiB
-			MaxWriteZeroesSectors: 1 << 21,
-			MaxDiscardSegments:    1,
+	// Per-capability advertisement: only what the backend implements is
+	// enabled, so the kernel won't issue an op we'd have to refuse.
+	if d.discarder != nil || d.zeroer != nil {
+		const maxSectors uint32 = 1 << 21 // 1 GiB per op
+		p := paramDiscard{DiscardGranularity: cfg.BlockSize, MaxDiscardSegments: 1}
+		if d.discarder != nil {
+			p.MaxDiscardSectors = maxSectors
 		}
+		if d.zeroer != nil {
+			p.MaxWriteZeroesSectors = maxSectors
+		}
+		params.Types |= paramTypeDiscard
+		params.Discard = p
 	}
 
 	// Pin params: same rationale as in addDev. The kernel reads from
