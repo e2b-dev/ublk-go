@@ -3,14 +3,17 @@ package ublk
 import "unsafe"
 
 const (
-	opRead  = 0
-	opWrite = 1
+	opRead        = 0
+	opWrite       = 1
+	opDiscard     = 3
+	opWriteZeroes = 5
 
 	flagCmdIoctlEncode = 1 << 6
 
 	maxQueueDepth = 4096
 
-	paramTypeBasic = 1 << 0
+	paramTypeBasic   = 1 << 0
+	paramTypeDiscard = 1 << 1
 )
 
 const (

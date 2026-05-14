@@ -140,14 +140,13 @@ func (w *worker) handleIO(tag uint16) int32 {
 	offset := int64(desc.StartSector) * 512
 	length := int(desc.NrSectors) * 512
 
-	if length > w.bufSize {
-		return -int32(unix.EIO)
-	}
-
 	switch op {
 	case opRead:
 		if length == 0 {
 			return 0
+		}
+		if length > w.bufSize {
+			return -int32(unix.EIO)
 		}
 		buf := w.bufs[tag][:length]
 		n, err := w.dev.backend.ReadAt(buf, offset)
@@ -160,8 +159,24 @@ func (w *worker) handleIO(tag uint16) int32 {
 		if length == 0 {
 			return 0
 		}
+		if length > w.bufSize {
+			return -int32(unix.EIO)
+		}
 		buf := w.bufs[tag][:length]
 		n, err := w.dev.backend.WriteAt(buf, offset)
+		if err != nil || n != length {
+			return -int32(unix.EIO)
+		}
+		return int32(n)
+
+	case opDiscard, opWriteZeroes:
+		if w.dev.zeroer == nil {
+			return -int32(unix.EOPNOTSUPP)
+		}
+		if length == 0 {
+			return 0
+		}
+		n, err := w.dev.zeroer.WriteZeroesAt(offset, int64(length))
 		if err != nil || n != length {
 			return -int32(unix.EIO)
 		}

@@ -22,6 +22,7 @@ type Device struct {
 	ctrlRing  *uring.Ring
 	info      devInfo
 	backend   Backend
+	zeroer    ZeroWriter // nil if backend does not implement ZeroWriter
 	useIoctl  bool
 	workers   []*worker
 	wg        sync.WaitGroup
@@ -40,13 +41,17 @@ func openDevice(backend Backend) (*Device, error) {
 		return nil, fmt.Errorf("create control ring: %w", err)
 	}
 
-	return &Device{
+	d := &Device{
 		id:       -1,
 		ctrlFD:   fd,
 		charFD:   -1,
 		ctrlRing: ctrlRing,
 		backend:  backend,
-	}, nil
+	}
+	if zw, ok := backend.(ZeroWriter); ok {
+		d.zeroer = zw
+	}
+	return d, nil
 }
 
 func (d *Device) addDev(queues, depth uint16, maxIOBuf uint32) error {
@@ -122,6 +127,19 @@ func (d *Device) setParams(size uint64, maxSectors uint32) error {
 			MaxSectors:      maxSectors,
 			DevSectors:      size / 512,
 		},
+	}
+
+	// Advertise DISCARD / WRITE_ZEROES only if the backend can serve them.
+	// 1 GiB cap matches the upper bound the kernel splits requests against;
+	// the kernel hands us each chunk in a single io desc.
+	if d.zeroer != nil {
+		params.Types |= paramTypeDiscard
+		params.Discard = paramDiscard{
+			DiscardGranularity:    512,
+			MaxDiscardSectors:     1 << 21, // 1 GiB
+			MaxWriteZeroesSectors: 1 << 21,
+			MaxDiscardSegments:    1,
+		}
 	}
 
 	// Pin params: same rationale as in addDev. The kernel reads from

@@ -11,9 +11,24 @@ import (
 // satisfy io.ReaderAt and io.WriterAt, whose contracts already require
 // that concurrent calls on disjoint ranges are safe — we rely on that
 // to let the kernel submit IO with queue depth 128.
+//
+// Backends may additionally implement [ZeroWriter] to advertise
+// DISCARD / WRITE_ZEROES support to the kernel. Both operations are
+// routed to WriteZeroesAt; matching the semantics of the NBD
+// dispatcher in github.com/e2b-dev/infra.
 type Backend interface {
 	io.ReaderAt
 	io.WriterAt
+}
+
+// ZeroWriter is an optional Backend capability that handles
+// DISCARD / WRITE_ZEROES requests. If a Backend implements it, the
+// kernel is told the device supports both operations and routes them
+// here; otherwise the kernel will not issue them.
+//
+// off and length are byte-granular; both are sector-aligned.
+type ZeroWriter interface {
+	WriteZeroesAt(off, length int64) (int, error)
 }
 
 // New creates a ublk block device. backend must be non-nil. Size must be a

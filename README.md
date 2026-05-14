@@ -172,6 +172,13 @@ type Backend interface {
     io.WriterAt
 }
 
+// ZeroWriter is an optional capability. If a Backend also implements it,
+// the kernel is told the device supports DISCARD / WRITE_ZEROES and
+// routes both to WriteZeroesAt. Otherwise the kernel will not issue them.
+type ZeroWriter interface {
+    WriteZeroesAt(off, length int64) (int, error)
+}
+
 func New(backend Backend, size uint64) (*Device, error)
 func (*Device) Path() string
 func (*Device) Close() error
