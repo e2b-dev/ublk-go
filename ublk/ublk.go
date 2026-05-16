@@ -17,6 +17,24 @@ type Backend interface {
 	io.WriterAt
 }
 
+// Discarder is an optional Backend capability. The kernel may issue DISCARD
+// when implemented; the range contents are undefined afterwards.
+type Discarder interface {
+	DiscardAt(off, length int64) (int, error)
+}
+
+// ZeroWriter is an optional Backend capability. The kernel may issue
+// WRITE_ZEROES when implemented; subsequent reads must return zeros.
+type ZeroWriter interface {
+	WriteZeroesAt(off, length int64, flags ZeroFlags) (int, error)
+}
+
+// ZeroFlags are per-op modifiers for [ZeroWriter.WriteZeroesAt].
+type ZeroFlags uint8
+
+// ZeroNoUnmap asks the backend to keep the range allocated (no hole punching).
+const ZeroNoUnmap ZeroFlags = 1 << iota
+
 // Option overrides a [New] default.
 type Option func(*config)
 

@@ -23,6 +23,8 @@ type Device struct {
 	ctrlRing  *uring.Ring
 	info      devInfo
 	backend   Backend
+	discarder Discarder
+	zeroer    ZeroWriter
 	useIoctl  bool
 	workers   []*worker
 	wg        sync.WaitGroup
@@ -41,13 +43,16 @@ func openDevice(backend Backend) (*Device, error) {
 		return nil, fmt.Errorf("create control ring: %w", err)
 	}
 
-	return &Device{
+	d := &Device{
 		id:       -1,
 		ctrlFD:   fd,
 		charFD:   -1,
 		ctrlRing: ctrlRing,
 		backend:  backend,
-	}, nil
+	}
+	d.discarder, _ = backend.(Discarder)
+	d.zeroer, _ = backend.(ZeroWriter)
+	return d, nil
 }
 
 func (d *Device) addDev(queues, depth uint16, maxIOBuf uint32) error {
@@ -124,6 +129,21 @@ func (d *Device) setParams(size uint64, cfg config, maxSectors uint32) error {
 			MaxSectors:      maxSectors,
 			DevSectors:      size / 512,
 		},
+	}
+
+	// Advertise DISCARD/WRITE_ZEROES only for the capabilities the backend
+	// implements, so the kernel won't issue an op we'd have to refuse.
+	if d.discarder != nil || d.zeroer != nil {
+		const maxSect uint32 = 1 << 21 // 1 GiB per op
+		p := paramDiscard{DiscardGranularity: cfg.blockSize, MaxDiscardSegments: 1}
+		if d.discarder != nil {
+			p.MaxDiscardSectors = maxSect
+		}
+		if d.zeroer != nil {
+			p.MaxWriteZeroesSectors = maxSect
+		}
+		params.Types |= paramTypeDiscard
+		params.Discard = p
 	}
 
 	// Pin params: same rationale as in addDev. The kernel reads from

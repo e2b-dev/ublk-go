@@ -172,6 +172,14 @@ type Backend interface {
     io.WriterAt
 }
 
+// Optional capabilities. The kernel only issues an op if its interface is implemented.
+type Discarder interface {
+    DiscardAt(off, length int64) (int, error)
+}
+type ZeroWriter interface {
+    WriteZeroesAt(off, length int64, flags ZeroFlags) (int, error)
+}
+
 func New(backend Backend, size uint64, opts ...Option) (*Device, error)
 
 // Options override defaults. Block size 512, queue depth 128, max IO 128 KiB.
