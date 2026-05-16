@@ -274,15 +274,6 @@ risk of constants drifting from the running kernel.
 
 ## Features
 
-### Configurable block size and queue depth
-
-The current API takes only `size`. Add a `Config` struct or options to expose:
-
-- block size (currently hardcoded 512)
-- queue depth (currently hardcoded 128)
-- max IO size (currently hardcoded 128KB)
-- number of queues (currently hardcoded 1)
-
 ### Multiple queues
 
 One IO queue per CPU with `UBLK_CMD_GET_QUEUE_AFFINITY` and pinned worker

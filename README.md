@@ -172,13 +172,20 @@ type Backend interface {
     io.WriterAt
 }
 
-func New(backend Backend, size uint64) (*Device, error)
+func New(backend Backend, size uint64, opts ...Option) (*Device, error)
+
+// Options override defaults. Block size 512, queue depth 128, max IO 128 KiB.
+func WithBlockSize(uint32) Option
+func WithQueueDepth(uint16) Option
+func WithMaxIOSize(uint32) Option
+
 func (*Device) Path() string
 func (*Device) Close() error
 ```
 
-`size` must be a positive multiple of 512. The block device uses
-512-byte logical blocks, 128KB max IO, and a single queue with depth 128.
+`size` must be > 0 and a multiple of the (configured) block size.
+Without options the device uses 512-byte logical blocks, 128 KiB max
+IO, and a single queue with depth 128.
 
 ### Closing a device
 
