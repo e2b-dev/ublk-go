@@ -24,28 +24,41 @@ func TestUblkStructSizes(t *testing.T) {
 	}
 }
 
-func TestNewInvalidSize(t *testing.T) {
+func TestNewValidation(t *testing.T) {
 	t.Parallel()
-	backend := newMemBackend(4096)
 
-	if _, err := New(backend, 0); err == nil {
-		t.Error("New(size=0) should fail")
+	backend := newMemBackend(4096)
+	tcs := []struct {
+		name string
+		size uint64
+		opts []Option
+	}{
+		{name: "zero size", size: 0},
+		{name: "size not multiple of block", size: 1000},
+		{name: "block size below 512", size: 4096, opts: []Option{WithBlockSize(256)}},
+		{name: "block size not pow2", size: 4096, opts: []Option{WithBlockSize(1024 + 512)}},
+		{name: "queue depth too high", size: 4096, opts: []Option{WithQueueDepth(maxQueueDepth + 1)}},
+		{name: "max IO not multiple of block", size: 1 << 20, opts: []Option{WithBlockSize(4096), WithMaxIOSize(5000)}},
+		{name: "max IO exceeds 1 MiB cap", size: 2 << 20, opts: []Option{WithMaxIOSize(maxMaxIOSize + 512)}},
 	}
-	if _, err := New(backend, 1000); err == nil {
-		t.Error("New(size=1000) should fail (not multiple of 512)")
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := New(backend, tc.size, tc.opts...); err == nil {
+				t.Errorf("New(size=%d, %+v) returned nil error", tc.size, tc.opts)
+			}
+		})
 	}
 }
 
 func TestNewNilBackend(t *testing.T) {
 	t.Parallel()
-
 	if _, err := New(nil, 4096); err == nil {
-		t.Fatal("New(nil, 4096) should fail")
+		t.Fatal("New(nil) should fail")
 	}
-
 	var typedNil *memBackend
 	if _, err := New(typedNil, 4096); err == nil {
-		t.Fatal("New(typed nil backend, 4096) should fail")
+		t.Fatal("New(typed-nil backend) should fail")
 	}
 }
 
