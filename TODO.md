@@ -134,19 +134,14 @@ opcode from `iowr(ublkType, nr, unsafe.Sizeof(ctrlCmd{}))`. Pure
 mechanical refactor; no behavior change today, future-proofs against
 struct extensions.
 
-### Handle non-read/non-write IO ops explicitly
+### Handle OP_FLUSH explicitly
 
-`worker.handleIO` currently returns `EOPNOTSUPP` for everything except
-`OP_READ`/`OP_WRITE`. We don't currently set `UBLK_ATTR_VOLATILE_CACHE`
-or `MaxDiscardSectors`, so the kernel block layer shouldn't emit
-`OP_FLUSH` / `OP_DISCARD` / `OP_WRITE_ZEROES` against us — but if a
-user touches the sysfs knobs (`echo 1 > .../discard_max_bytes`) or
-mounts a filesystem that issues unconditional flushes, they'll get
-unexplained EIO. Cheap fix when we add the optional backend interfaces:
-
-- `OP_FLUSH` (2) → `0` when no `Flusher`, otherwise call it
-- `OP_DISCARD` (3) → `0` (or call `Discarder` once exposed)
-- `OP_WRITE_ZEROES` (5) → `0` (or call `Zeroer`)
+`worker.handleIO` now dispatches `OP_DISCARD` / `OP_WRITE_ZEROES` to
+optional `Discarder` / `ZeroWriter` backends and per-capability
+advertisement prevents the kernel from issuing them when the backend
+doesn't implement them. `OP_FLUSH` (2) is still unhandled — when we
+add a `Flusher` interface and set `UBLK_ATTR_VOLATILE_CACHE`, route
+flushes here.
 
 Cross-ref: semistrict's `IOOp` enum in
 [`const.go`](https://github.com/semistrict/go-ublk/blob/main/const.go)
@@ -279,23 +274,19 @@ risk of constants drifting from the running kernel.
 One IO queue per CPU with `UBLK_CMD_GET_QUEUE_AFFINITY` and pinned worker
 goroutines. Required for higher throughput.
 
-### Flusher / Discarder / WriteZeroer
+### Flusher
 
-Optional interfaces the backend can implement for richer block semantics:
+`Discarder` and `ZeroWriter` ship. Still missing:
 
 ```go
 type Flusher interface { Flush() error }
-type Discarder interface { Discard(off, length int64) error }
-type WriteZeroer interface { WriteZeroes(off, length int64) error }
 ```
 
-Set `UBLK_ATTR_VOLATILE_CACHE` when backend implements `Flusher`, declare
-`MaxDiscardSectors` when it implements `Discarder`, etc.
+Set `UBLK_ATTR_VOLATILE_CACHE` when the backend implements `Flusher`
+and route `OP_FLUSH` to it from `worker.handleIO`.
 
 Cross-ref: semistrict's [`ReaderAtHandler`](https://github.com/semistrict/go-ublk/blob/main/easy.go)
-already implements this exact pattern (`Flusher`, `Syncer`, `Discarder`,
-`Zeroer`) with optional-interface assertion. Worth mirroring the API
-shape so users have a familiar surface.
+mirrors the same optional-interface pattern.
 
 ### Diagnostic / introspection commands
 

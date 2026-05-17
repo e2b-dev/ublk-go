@@ -33,11 +33,32 @@ func (b *stubBackend) WriteAt(p []byte, off int64) (int, error) {
 	return len(p), nil
 }
 
+type stubDiscarder struct {
+	stubBackend
+	discardAt func(off, length int64) (int, error)
+}
+
+func (b *stubDiscarder) DiscardAt(off, length int64) (int, error) {
+	return b.discardAt(off, length)
+}
+
+type stubZeroer struct {
+	stubBackend
+	writeZeroesAt func(off, length int64, flags ZeroFlags) (int, error)
+}
+
+func (b *stubZeroer) WriteZeroesAt(off, length int64, flags ZeroFlags) (int, error) {
+	return b.writeZeroesAt(off, length, flags)
+}
+
 func newTestWorker(backend Backend) *worker {
 	const depth = 1
 	const bufSize = 4096
+	dev := &Device{backend: backend}
+	dev.discarder, _ = backend.(Discarder)
+	dev.zeroer, _ = backend.(ZeroWriter)
 	w := &worker{
-		dev:     &Device{backend: backend},
+		dev:     dev,
 		depth:   depth,
 		bufSize: bufSize,
 		ioDescs: make([]byte, int(depth)*int(sizeofIODesc)),
@@ -172,6 +193,68 @@ func TestWorkerHandleIOShortWrite(t *testing.T) {
 	if backend.writes != 1 {
 		t.Fatalf("WriteAt calls = %d, want 1", backend.writes)
 	}
+}
+
+func TestWorkerHandleIODiscard(t *testing.T) {
+	t.Parallel()
+
+	t.Run("not implemented", func(t *testing.T) {
+		t.Parallel()
+		w := newTestWorker(&stubBackend{})
+		w.setDesc(ioDesc{OpFlags: opDiscard, NrSectors: 8})
+		if got := w.handleIO(0); got != -int32(unix.EOPNOTSUPP) {
+			t.Fatalf("handleIO() = %d, want -EOPNOTSUPP", got)
+		}
+	})
+
+	t.Run("dispatched", func(t *testing.T) {
+		t.Parallel()
+		// Length above bufSize asserts non-buffered ops aren't capped by w.bufSize.
+		const sectors = 4096
+		var gotOff, gotLen int64
+		d := &stubDiscarder{discardAt: func(off, length int64) (int, error) {
+			gotOff, gotLen = off, length
+			return int(length), nil
+		}}
+		w := newTestWorker(d)
+		w.setDesc(ioDesc{OpFlags: opDiscard, NrSectors: sectors, StartSector: 3})
+		if got := w.handleIO(0); got != sectors*512 {
+			t.Fatalf("handleIO() = %d, want %d", got, sectors*512)
+		}
+		if gotOff != 3*512 || gotLen != sectors*512 {
+			t.Fatalf("DiscardAt(%d,%d) want (%d,%d)", gotOff, gotLen, 3*512, sectors*512)
+		}
+	})
+}
+
+func TestWorkerHandleIOWriteZeroes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("not implemented", func(t *testing.T) {
+		t.Parallel()
+		w := newTestWorker(&stubBackend{})
+		w.setDesc(ioDesc{OpFlags: opWriteZeroes, NrSectors: 8})
+		if got := w.handleIO(0); got != -int32(unix.EOPNOTSUPP) {
+			t.Fatalf("handleIO() = %d, want -EOPNOTSUPP", got)
+		}
+	})
+
+	t.Run("flags plumbed", func(t *testing.T) {
+		t.Parallel()
+		var gotFlags ZeroFlags
+		z := &stubZeroer{writeZeroesAt: func(_, length int64, f ZeroFlags) (int, error) {
+			gotFlags = f
+			return int(length), nil
+		}}
+		w := newTestWorker(z)
+		w.setDesc(ioDesc{OpFlags: opWriteZeroes | ioFlagNoUnmap, NrSectors: 8})
+		if got := w.handleIO(0); got != 8*512 {
+			t.Fatalf("handleIO() = %d, want %d", got, 8*512)
+		}
+		if gotFlags != ZeroNoUnmap {
+			t.Fatalf("flags = %#b, want ZeroNoUnmap", gotFlags)
+		}
+	})
 }
 
 func TestAlignedAlloc(t *testing.T) {
